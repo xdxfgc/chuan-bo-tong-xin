@@ -1,0 +1,160 @@
+/* =====================================================================
+   oled.cpp   OLED 画面实现
+   ---------------------------------------------------------------------
+   两种画面自动切换：
+     收到过信标坐标 → 信标界面（坐标 / 方位 / 距离 / 指北箭头 / 本船坐标）
+     还没收到信标   → 本船状态（卫星数 / 坐标 / 激光距离 / 时间与精度）
+   ===================================================================== */
+
+#include "oled.h"
+#include "gnss.h"
+#include "tof.h"
+#include "imu.h"
+#include "beacon.h"
+#include <U8g2lib.h>
+#include <Wire.h>
+#include <math.h>
+
+static U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+static unsigned long s_lastMs = 0;
+
+static void useCN() { u8g2.setFont(u8g2_font_wqy12_t_gb2312); }   // 中文（GB2312）
+static void useSM() { u8g2.setFont(u8g2_font_6x12_tf); }          // 数字与字母
+static void drawCN(int x, int y, const char* s) { useCN(); u8g2.drawUTF8(x, y, s); }
+static void drawSM(int x, int y, const char* s) { useSM(); u8g2.drawStr(x, y, s); }
+static int  smW(const char* s) { useSM(); return u8g2.getStrWidth(s); }
+
+// 指北箭头：从 (cx,cy) 朝方位角 bearing 画一段线加两片箭头
+static void drawArrow(int cx, int cy, int r, float bearing) {
+  double rad = bearing * M_PI / 180.0;
+  int tx = cx + (int)lround(r * sin(rad));
+  int ty = cy - (int)lround(r * cos(rad));
+  u8g2.drawLine(cx, cy, tx, ty);
+  for (int k = -1; k <= 1; k += 2) {
+    double a = rad + M_PI + k * 0.5;
+    u8g2.drawLine(tx, ty,
+                  tx + (int)lround(4 * sin(a)),
+                  ty - (int)lround(4 * cos(a)));
+  }
+}
+
+void oledBegin() {
+  Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);   // 与激光共用总线，重复调用无副作用
+  Wire.setClock(400000);
+  u8g2.setI2CAddress(OLED_ADDR * 2);        // U8g2 的地址要左移一位
+  u8g2.begin();
+  u8g2.clearBuffer();
+  u8g2.sendBuffer();
+  Serial.printf("OLED 已启动：SDA=GPIO%d  SCL=GPIO%d  地址 0x%02X\n",
+                OLED_SDA_PIN, OLED_SCL_PIN, OLED_ADDR);
+}
+
+/* ---------------- 画面 A：信标界面 ---------------- */
+
+static void renderBeacon() {
+  const GpsStatus& g = gpsGet();
+  char buf[32];
+
+  /* 第 1 行：标题 + 链路状态 */
+  drawCN(0, 11, "信标坐标");
+  if (beaconLinkUp()) {
+    snprintf(buf, sizeof(buf), "%ddBm", beaconRssi());
+    drawSM(128 - smW(buf), 11, buf);
+  } else {
+    drawCN(128 - 36, 11, "无信号");
+  }
+
+  /* 第 2、3 行：信标经纬度 */
+  if (beaconTargetValid()) {
+    snprintf(buf, sizeof(buf), "%c%.6f", beaconLat() >= 0 ? 'N' : 'S', fabs(beaconLat()));
+    drawSM(0, 23, buf);
+    snprintf(buf, sizeof(buf), "%c%.6f", beaconLon() >= 0 ? 'E' : 'W', fabs(beaconLon()));
+    drawSM(0, 35, buf);
+  } else {
+    drawCN(0, 23, "信标未定位");
+  }
+
+  /* 第 4 行：方位 + 距离 + 指北箭头 */
+  if (beaconHaveDir()) {
+    float d = beaconDistM();
+    drawCN(0, 47, beaconDirText());
+    if (d < 1000.0f) snprintf(buf, sizeof(buf), "%d", (int)(d + 0.5f));
+    else             snprintf(buf, sizeof(buf), "%.1f", d / 1000.0f);
+    drawSM(26, 47, buf);
+    drawCN(26 + smW(buf) + 2, 47, d < 1000.0f ? "米" : "公里");
+    drawArrow(117, 40, 7, beaconBearing());
+  } else if (beaconTargetValid()) {
+    drawCN(0, 47, "本船未定位");
+  }
+
+  /* 第 5 行：本船坐标 */
+  drawCN(0, 59, "本船");
+  if (g.valid) {
+    snprintf(buf, sizeof(buf), "%.4f %.4f", g.lat, g.lon);
+    drawSM(26, 59, buf);
+  } else {
+    drawCN(26, 59, "未定位");
+  }
+}
+
+/* ---------------- 画面 B：本船状态 ---------------- */
+
+static void renderOwn() {
+  const GpsStatus& g = gpsGet();
+  char buf[32];
+
+  /* 第 1 行：标题 + 卫星数 */
+  drawCN(0, 11, "本船状态");
+  if (g.valid) {
+    snprintf(buf, sizeof(buf), "%d星 %s", g.satsUsed, g.fixType == 3 ? "3D" : "2D");
+  } else {
+    snprintf(buf, sizeof(buf), "%d星", g.satsUsed);
+  }
+  drawSM(128 - smW(buf), 11, buf);
+
+  /* 第 2、3 行：本船经纬度 */
+  if (g.valid) {
+    snprintf(buf, sizeof(buf), "%c%.6f", g.lat >= 0 ? 'N' : 'S', fabs(g.lat));
+    drawSM(0, 23, buf);
+    snprintf(buf, sizeof(buf), "%c%.6f", g.lon >= 0 ? 'E' : 'W', fabs(g.lon));
+    drawSM(0, 35, buf);
+  } else {
+    drawCN(0, 23, "等待定位…");
+  }
+
+  /* 第 4 行：激光距离 */
+  drawCN(0, 47, "激光");
+  if (!tofIsReady()) {
+    drawCN(26, 47, "未连接");
+  } else if (tofIsValid()) {
+    snprintf(buf, sizeof(buf), "%umm", tofDistanceMm());
+    drawSM(26, 47, buf);
+  } else {
+    drawCN(26, 47, "无效");
+  }
+
+  /* 第 5 行：俯仰与横滚 */
+  const ImuData& im = imuGet();
+  if (im.ready) {
+    drawCN(0, 59, "俯仰");
+    snprintf(buf, sizeof(buf), "%.1f", im.pitch);
+    drawSM(26, 59, buf);
+    drawCN(60, 59, "横滚");
+    snprintf(buf, sizeof(buf), "%.1f", im.roll);
+    drawSM(86, 59, buf);
+  } else {
+    drawCN(0, 59, "姿态未连接");
+  }
+}
+
+/* ---------------- 对外接口 ---------------- */
+
+void oledUpdate() {
+  if (millis() - s_lastMs < OLED_REFRESH_MS) return;
+  s_lastMs = millis();
+
+  u8g2.clearBuffer();
+  if (beaconHasTarget()) renderBeacon();
+  else                   renderOwn();
+  u8g2.sendBuffer();
+}
