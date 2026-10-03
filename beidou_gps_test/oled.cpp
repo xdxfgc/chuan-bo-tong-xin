@@ -10,6 +10,7 @@
 #include "gnss.h"
 #include "tof.h"
 #include "imu.h"
+#include "mag.h"
 #include "beacon.h"
 #include <U8g2lib.h>
 #include <Wire.h>
@@ -74,15 +75,25 @@ static void renderBeacon() {
     drawCN(0, 23, "信标未定位");
   }
 
-  /* 第 4 行：方位 + 距离 + 指北箭头 */
+  /* 第 4 行：方位 + 距离 + 方向箭头
+     能用相对船头方位时，箭头和文字都是「相对船头」，并在上方画一个小尖表示屏幕上方=船头；
+     没有磁力计时退回绝对方位，箭头就是指南针的指北箭头。 */
   if (beaconHaveDir()) {
     float d = beaconDistM();
-    drawCN(0, 47, beaconDirText());
+    bool  rel = beaconUseRel();
+    int   dx  = rel ? 40 : 28;                 // 相对方位词是 3 个字，要留宽一点
+
+    drawCN(0, 47, rel ? beaconRelDirText() : beaconDirText());
     if (d < 1000.0f) snprintf(buf, sizeof(buf), "%d", (int)(d + 0.5f));
     else             snprintf(buf, sizeof(buf), "%.1f", d / 1000.0f);
-    drawSM(26, 47, buf);
-    drawCN(26 + smW(buf) + 2, 47, d < 1000.0f ? "米" : "公里");
-    drawArrow(117, 40, 7, beaconBearing());
+    drawSM(dx, 47, buf);
+    drawCN(dx + smW(buf) + 2, 47, d < 1000.0f ? "米" : "公里");
+
+    if (rel) {                                  // 船头参考：屏幕上方 = 船头
+      u8g2.drawLine(114, 33, 117, 30);
+      u8g2.drawLine(120, 33, 117, 30);
+    }
+    drawArrow(117, 43, 6, beaconArrowBearing());
   } else if (beaconTargetValid()) {
     drawCN(0, 47, "本船未定位");
   }
@@ -122,7 +133,7 @@ static void renderOwn() {
     drawCN(0, 23, "等待定位…");
   }
 
-  /* 第 4 行：激光距离 */
+  /* 第 4 行：激光距离 + 航向 */
   drawCN(0, 47, "激光");
   if (!tofIsReady()) {
     drawCN(26, 47, "未连接");
@@ -131,6 +142,14 @@ static void renderOwn() {
     drawSM(26, 47, buf);
   } else {
     drawCN(26, 47, "无效");
+  }
+
+  drawCN(64, 47, "航向");
+  if (magPresent() && magCalibrated()) {
+    snprintf(buf, sizeof(buf), "%.0f", magHeadingDeg());
+    drawSM(90, 47, buf);
+  } else {
+    drawSM(90, 47, "--");
   }
 
   /* 第 5 行：俯仰与横滚 */

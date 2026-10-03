@@ -116,16 +116,21 @@ void voiceSpeakStartup() {
   voiceSend();
 }
 
-void voiceAnnounce(bool haveDir, double tLat, double tLon, float distM, int sector) {
+void voiceAnnounce(bool haveDir, double tLat, double tLon, float distM, int sector, bool useRel) {
   txtReset();
   txtAddVolume();
   VADD(GB_FELL_OVERBOARD);
 
   if (haveDir) {
-    // “人员落水，信标在 东北 方向，距离约 1234 米，坐标 北纬31.2304度…”
+    // 绝对方位：“人员落水，信标在 东北 方向，距离约 1234 米，坐标…”
+    // 相对船头：“人员落水，信标在 左前方，距离约 1234 米，坐标…”
     VADD(GB_BEACON_AT);
-    VADD(GB_DIR[sector & 7]);
-    VADD(GB_DIRECTION);
+    if (useRel) {
+      VADD(GB_REL_DIR[sector & 7]);
+    } else {
+      VADD(GB_DIR[sector & 7]);
+      VADD(GB_DIRECTION);
+    }
     VADD(GB_DIST_ABOUT);
     if (distM < 1000.0f) {
       txtAddNum(distM, 0);
@@ -163,35 +168,4 @@ void voiceSpeakLinkBack() {
   txtAddVolume();
   VADD(GB_LINK_BACK);
   voiceSend();
-}
-
-// 串口命令：v10 / vol=10 / 10 都能识别
-void voicePollSerial() {
-  static char   buf[16];
-  static size_t n = 0;
-
-  while (Serial.available()) {
-    char c = (char)Serial.read();
-    if (c == '\n' || c == '\r') {
-      if (n) {
-        buf[n] = '\0';
-        const char* p = buf;
-        while (*p && !isdigit((unsigned char)*p)) p++;
-        if (*p) {
-          int v = atoi(p);
-          if (v > 16) v = 16;
-          if (v < 0)  v = 0;
-          voiceSetVolume((uint8_t)v);
-          voiceSpeakTest();
-        } else {
-          Serial.println("用法：输入 v0~v16 回车，例如 v10（0 最小，16 最大）");
-        }
-        n = 0;
-      }
-    } else if (n < sizeof(buf) - 1) {
-      buf[n++] = c;
-    } else {
-      n = 0;                                   // 太长就丢掉重来
-    }
-  }
 }

@@ -48,6 +48,42 @@ static const uint32_t OLED_REFRESH_MS = 250;    // 两次刷屏的最短间隔
 static const uint8_t  IMU_ADDR    = 0x68;
 static const uint32_t IMU_READ_MS = 20;         // 读取间隔（50Hz，对应文档采集频率）
 
+/* ---------------- 磁力计 GY-282 / HMC5983（单独一路 I2C） ----------------
+   单独走 Wire1（GPIO25/26），和激光/OLED/MPU6050 那条（Wire，21/22）分开：
+   各用各的硬件控制器、时钟和总线复位，磁力计这边自动降速也不会拖累激光。
+   VCC -> 3.3V   GND -> GND   SDA -> GPIO25   SCL -> GPIO26
+   想省一对脚：把 I2C_BUS_INDEX 改成 0、SDA/SCL 改成 21/22，
+   地址 0x1E 与 0x29 / 0x3C / 0x68 不冲突。                          */
+#define I2C_BUS_INDEX   1        // 1 = Wire1（磁力计单独一路，默认）  0 = Wire（与激光共用）
+#define I2C_SDA         25
+#define I2C_SCL         26
+#define I2C_HZ          50000UL  // 先跑 50kHz 求稳；代码会按上升时间自动降速
+#define MAG_ADDR        0x1E     // HMC5983 固定地址（与 HMC5883L 相同）
+
+/* HMC5983 参数（上电先从 flash 读，没有才用这里的默认值） */
+#define MAG_AVG         1        // 平均次数：0=1次 1=2 2=4 3=8
+#define MAG_RATE        6        // 输出速率：0=0.75Hz 1=1.5 2=3 3=7.5 4=15 5=30 6=75 7=220
+#define MAG_GAIN        1        // 量程：0=±0.88Ga 1=±1.3 2=±1.9 3=±2.5 4=±4.0 5=±4.7 6=±5.6 7=±8.1
+#define MAG_MODE        0        // 0=连续测量（实测失败率比单次低）
+#define MAG_READ_MS     50UL     // 最快多久读一帧
+#define MAG_EMA_ALPHA   0.30f    // 航向平滑系数：大=跟手但抖，小=稳但迟
+#define MAG_DECL_DEG    0.0f     // 磁偏角（真北修正），长沙一带约 -5
+#define MAG_TEMP_ENABLE 0        // 读片上温度（实验性）
+#define MAG_TEMP_OFFSET_C 0.0f
+#define MAG_CAL_DEFAULT_SEC  15  // 标定默认秒数
+#define MAG_CAL_MIN_RANGE_UT 8.0f
+
+/* ---------------- 板载 BOOT 按键（GPIO0） ----------------
+   短按：把当前船头朝向设为出发点（0°）
+   长按 3 秒：开始磁力计标定（拿起来绕「8」字慢慢转）
+   不想用就把 BTN_ENABLE 改成 0。                                    */
+#define BTN_ENABLE      1
+#define BTN_PIN         0
+#define BTN_ACTIVE_LOW  1
+#define BTN_DEBOUNCE_MS 30
+#define BTN_LONG_MS     3000
+#define BTN_CAL_SECONDS 15
+
 /* ---------------- LoRa SX1278（433MHz，SPI） ----------------
    SCK->GPIO14  MISO->GPIO12  MOSI->GPIO13  NSS->GPIO27  RST->GPIO32
    DIO0 不接：程序用轮询，不需要中断脚。

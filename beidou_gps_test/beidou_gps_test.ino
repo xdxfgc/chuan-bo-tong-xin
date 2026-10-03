@@ -12,6 +12,9 @@
      tof.h / tof.cpp         激光测距 VL53L1X
      oled.h / oled.cpp       OLED 显示（SSD1306，与激光共用 I2C 总线）
      imu.h / imu.cpp         MPU6050 六轴姿态（同样挂在 I2C 总线上）
+     mag.h / mag.cpp         磁力计 GY-282（HMC5983）：航向、标定，走独立的 Wire1
+     button.h / button.cpp   板载 BOOT 键：短按设出发点，长按开始标定
+     cmd.h / cmd.cpp         串口命令：音量、标定、出发点、磁偏角、扫描
      lora_link.h / lora_link.cpp   LoRa 收发与 ACK 应答
      voice.h / voice.cpp     SYN6288 语音播报
      beacon.h / beacon.cpp   信标接收、方位解算、搜索引导
@@ -27,6 +30,9 @@
 #include "tof.h"
 #include "oled.h"
 #include "imu.h"
+#include "mag.h"
+#include "button.h"
+#include "cmd.h"
 #include "lora_link.h"
 #include "voice.h"
 #include "beacon.h"
@@ -46,6 +52,8 @@ void setup() {
   tofBegin();     // 激光测距
   oledBegin();    // OLED 显示（与激光共用 I2C 总线）
   imuBegin();     // MPU6050 姿态（同一条 I2C 总线）
+  magBegin();     // 磁力计（独立的 Wire1：GPIO25/26）
+  buttonBegin();  // 板载 BOOT 按键
   loraBegin();    // LoRa（失败会在 beaconUpdate 里每 2 秒重试）
   voiceBegin();   // 语音串口
   beaconBegin();  // 信标状态
@@ -53,6 +61,7 @@ void setup() {
 
   delay(1000);            // 等 SYN6288 上电稳定再念第一句
   voiceSpeakStartup();
+  cmdBegin();             // 打印串口命令提示
 
   Serial.printf("语音：当前音量 %u/16，串口输入 v0~v16 回车可随时改\n",
                 (unsigned)voiceVolume());
@@ -60,12 +69,15 @@ void setup() {
 }
 
 void loop() {
-  voicePollSerial();   // 串口命令：在线调音量
+  cmdPoll();           // 串口命令：音量 / 标定 / 出发点 / 磁偏角
+  cmdPollEvents();     // 标定进度与结束提示
+  buttonUpdate();      // 板载按键（短按设出发点、长按标定）
 
   gpsUpdate();         // 读定位并解析
   tofUpdate();         // 读激光测距
   oledUpdate();        // 刷屏（内部 250ms 限速）
   imuUpdate();         // 读姿态（50Hz）
+  magUpdate();         // 读磁力计、算航向（内部按速率自己节流）
   beaconUpdate();      // 收信标、算方位、按需播报、判断链路超时
   netLoop();           // 处理网页请求与 WiFi 重连
 
@@ -76,6 +88,7 @@ void loop() {
     gpsPrintReport();
     tofPrintReport();
     imuPrintReport();
+    cmdPrintMagLine();
     beaconPrintReport();
   }
 }

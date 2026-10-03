@@ -27,4 +27,10 @@ float       beaconDistM();       // 到信标的距离（米）
 float       beaconBearing();     // 方位角（度）
 const char* beaconDirText();     // 方位文字，如“东北”
 
+/* 相对船头（需要磁力计在位并已标定；否则下面几个退回绝对方位） */
+bool        beaconUseRel();      // 当前是否在用「相对船头」方位
+float       beaconRelBearing();  // 信标相对船头的角度，0=正前方，顺时针
+const char* beaconRelDirText();  // 相对方位文字，如“左前方”
+float       beaconArrowBearing();// 画箭头该用的角度（能用相对就用相对）
+
 #endif

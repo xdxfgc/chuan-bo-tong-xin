@@ -6,10 +6,15 @@
 #include "gnss.h"
 #include "lora_link.h"
 #include "voice.h"
+#include "mag.h"
 
 /* ---------------- 方位与距离解算（球面公式） ---------------- */
 
 static const char* const GEO_DIR_UTF8[8] = { "正北", "东北", "正东", "东南", "正南", "西南", "正西", "西北" };
+
+// 相对船头的八个方位：0 正前方 1 右前方 2 正右方 3 右后方 4 正后方 5 左后方 6 正左方 7 左前方
+static const char* const GEO_REL_UTF8[8] = { "正前方", "右前方", "正右方", "右后方",
+                                             "正后方", "左后方", "正左方", "左前方" };
 
 static double toRad(double d) { return d * M_PI / 180.0; }
 static double toDeg(double r) { return r * 180.0 / M_PI; }
@@ -48,6 +53,13 @@ static const char* geoDirText(int sector) {
   return GEO_DIR_UTF8[sector];
 }
 
+// 把「相对船头的角度」归到八个扇区
+static int relDirSector(float rel) {
+  int s = (int)((rel + 22.5f) / 45.0f) % 8;
+  if (s < 0) s += 8;
+  return s;
+}
+
 /* ---------------- 状态 ---------------- */
 
 static bool          s_linkUp        = false;
@@ -63,6 +75,10 @@ static bool          s_haveDir  = false;
 static float         s_distM    = 0.0f;
 static float         s_bearing  = 0.0f;
 static int           s_sector   = 0;
+
+static bool          s_useRel     = false;   // 是否能用相对船头方位
+static float         s_relBearing = 0.0f;
+static int           s_relSector  = 0;
 
 static bool          s_announced      = false;   // 播报去重
 static bool          s_reportedNoFix  = false;
@@ -80,6 +96,9 @@ static void refreshGeo() {
   s_distM   = 0.0f;
   s_bearing = 0.0f;
   s_sector  = 0;
+  s_useRel     = false;
+  s_relBearing = 0.0f;
+  s_relSector  = 0;
 
   const GpsStatus& g = gpsGet();
   if (s_hasTarget && s_targetValid && g.valid) {
@@ -87,6 +106,16 @@ static void refreshGeo() {
     s_bearing = (float)geoBearingDeg(g.lat, g.lon, s_tLat, s_tLon);
     s_sector  = geoDirSector(s_bearing);
     s_haveDir = true;
+
+    // 相对船头：需要磁力计在位、而且标定过，否则退回绝对方位播报
+    if (magPresent() && magCalibrated()) {
+      float rel = s_bearing - magHeadingDeg();
+      while (rel < 0.0f)     rel += 360.0f;
+      while (rel >= 360.0f)  rel -= 360.0f;
+      s_relBearing = rel;
+      s_relSector  = relDirSector(rel);
+      s_useRel     = true;
+    }
   }
 }
 
@@ -102,7 +131,8 @@ static void maybeAnnounce() {
 
   if (!(first || dirChange || moved || timeout)) return;
 
-  voiceAnnounce(s_haveDir, s_tLat, s_tLon, s_distM, s_sector);
+  voiceAnnounce(s_haveDir, s_tLat, s_tLon, s_distM,
+                s_useRel ? s_relSector : s_sector, s_useRel);
 
   s_announced      = true;
   s_lastHaveDir    = s_haveDir;
@@ -196,8 +226,13 @@ void beaconPrintReport() {
     Serial.println("信标位置 : 还没收到数据");
   }
   if (s_haveDir) {
-    Serial.printf("搜索引导 : %s方向  约 %.0f 米（方位 %.0f 度）\n",
-                  geoDirText(s_sector), s_distM, s_bearing);
+    if (s_useRel) {
+      Serial.printf("搜索引导 : %s  约 %.0f 米（相对船头 %.0f 度 / 绝对 %.0f 度）\n",
+                    GEO_REL_UTF8[s_relSector], s_distM, s_relBearing, s_bearing);
+    } else {
+      Serial.printf("搜索引导 : %s方向  约 %.0f 米（绝对方位 %.0f 度）\n",
+                    geoDirText(s_sector), s_distM, s_bearing);
+    }
   } else {
     Serial.println("搜索引导 : 等本船定位和信标坐标都有效后给出");
   }
@@ -216,3 +251,8 @@ bool        beaconHaveDir()     { return s_haveDir; }
 float       beaconDistM()       { return s_distM; }
 float       beaconBearing()     { return s_bearing; }
 const char* beaconDirText()     { return s_haveDir ? geoDirText(s_sector) : "--"; }
+
+bool        beaconUseRel()      { return s_useRel; }
+float       beaconRelBearing()  { return s_relBearing; }
+const char* beaconRelDirText()  { return s_useRel ? GEO_REL_UTF8[s_relSector] : "--"; }
+float       beaconArrowBearing(){ return s_useRel ? s_relBearing : s_bearing; }

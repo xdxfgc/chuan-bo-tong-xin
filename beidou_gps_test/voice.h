@@ -19,14 +19,12 @@ uint8_t voiceVolume();
 void voiceSpeakTest();             // 播一句“你好”，调音量试听用
 void voiceSpeakStartup();          // 开机提示音
 
-// 播报信标：方向 + 距离 + 坐标。haveDir=false 时只报坐标并说明本方未定位
-void voiceAnnounce(bool haveDir, double tLat, double tLon, float distM, int sector);
+// 播报信标：方向 + 距离 + 坐标。haveDir=false 时只报坐标并说明本方未定位。
+// useRel=true 用「相对船头」的八个方位（左前方这种），false 用绝对方位（东北方向这种）。
+void voiceAnnounce(bool haveDir, double tLat, double tLon, float distM, int sector, bool useRel);
 
 void voiceSpeakTargetNoPos();      // 信标未定位
 void voiceSpeakLinkLost();         // 与信标失去联系
 void voiceSpeakLinkBack();         // 通信已恢复
-
-// 串口命令：在串口监视器里输入 v0~v16 回车，在线调音量
-void voicePollSerial();
 
 #endif

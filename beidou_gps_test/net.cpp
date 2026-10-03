@@ -6,6 +6,7 @@
 #include "gnss.h"
 #include "tof.h"
 #include "imu.h"
+#include "mag.h"
 #include "beacon.h"
 
 static WebServer server(WEB_PORT);
@@ -75,6 +76,8 @@ static const char INDEX_HTML[] = R"HTML(
     <div class="card"><div class="k">信标链路</div><div class="v small" id="link">--</div></div>
     <div class="card"><div class="k">信标距离</div><div class="v" id="dist">--</div></div>
     <div class="card"><div class="k">信标方位</div><div class="v" id="dir">--</div></div>
+    <div class="card"><div class="k">航向角</div><div class="v" id="hdg">--</div></div>
+    <div class="card"><div class="k">磁力计</div><div class="v small" id="mag">--</div></div>
   </div>
   <h2>位姿帧（文档表27 · 0x01）</h2>
   <div class="hex" id="frame">--</div>
@@ -115,7 +118,9 @@ async function tick(){
     document.getElementById('roll').textContent  = d.imuReady ? (d.roll.toFixed(1) + '°') : '--';
     document.getElementById('link').textContent  = d.linkUp ? ('在线 ' + d.rssi + ' dBm') : '离线';
     document.getElementById('dist').textContent  = d.haveDir ? (d.distM.toFixed(0) + ' m') : '--';
-    document.getElementById('dir').textContent   = d.haveDir ? d.dirText : '--';
+    document.getElementById('dir').textContent   = d.haveDir ? (d.useRel ? d.relDirText : d.dirText) : '--';
+    document.getElementById('hdg').textContent   = (d.magOk && d.magCal) ? (d.heading.toFixed(0) + '°') : '--';
+    document.getElementById('mag').textContent   = d.magOk ? (d.magCal ? '已标定' : '未标定') : '未连接';
     document.getElementById('frame').textContent = d.frame;
     document.getElementById('raw').textContent   = d.raw;
     const ml = document.getElementById('maplink');
@@ -192,6 +197,13 @@ static String buildJson() {
   snprintf(num, sizeof(num), "%.6f", beaconLon()); j += ",\"tLon\":"; j += num;
   snprintf(num, sizeof(num), "%.0f", beaconDistM()); j += ",\"distM\":"; j += num;
   j += ",\"dirText\":\"";   j += escapeJson(String(beaconDirText())); j += "\"";
+  j += ",\"useRel\":";      j += (beaconUseRel() ? "true" : "false");
+  j += ",\"relDirText\":\""; j += escapeJson(String(beaconRelDirText())); j += "\"";
+  snprintf(num, sizeof(num), "%.0f", beaconRelBearing()); j += ",\"relBearing\":"; j += num;
+  j += ",\"magOk\":";       j += (magPresent() ? "true" : "false");
+  j += ",\"magCal\":";      j += (magCalibrated() ? "true" : "false");
+  snprintf(num, sizeof(num), "%.1f", magHeadingDeg()); j += ",\"heading\":"; j += num;
+  snprintf(num, sizeof(num), "%.1f", magDeviation());  j += ",\"headingDev\":"; j += num;
   j += ",\"runSec\":";     j += (millis() / 1000);
   j += "}";
   return j;
