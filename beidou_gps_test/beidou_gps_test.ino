@@ -21,6 +21,8 @@
 
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Wire.h>
+#include <VL53L1X.h>       // Pololu 的 VL53L1X 库（库管理器里装 VL53L1X）
 
 /* ---------------- 接线与串口配置（需要改动时改这里） ---------------- */
 #define GPS_RX_PIN   17      // ESP32 接收 <- 模块 TX
@@ -74,6 +76,75 @@ IPAddress STATIC_DNS    (192, 168, 31, 1);     // DNS，填网关即可
 #define AP_FALLBACK   1
 #define AP_SSID      "Beidou-GPS"
 #define AP_PASS      "12345678"       // 热点密码，至少 8 位
+
+/* ---------------- 激光测距 VL53L1X（I2C） ----------------
+   接线：VIN -> 3.3V（切勿接 5V，会烧坏）  GND -> GND
+         SCL -> GPIO22    SDA -> GPIO21
+   最简四根线即可工作，GPIO1 和 XSHUT 可以空着。 */
+#define TOF_SDA_PIN    21        // SDA 接 GPIO21
+#define TOF_SCL_PIN    22        // SCL 接 GPIO22
+#define TOF_LONG_RANGE 1         // 1 = 远距模式（最远约 4 米），0 = 短距模式
+#define TOF_READ_MS    50        // 读取间隔（毫秒）
+
+/* =====================================================================
+   激光测距模块 VL53L1X
+   ===================================================================== */
+
+static VL53L1X tof;
+static bool     tofReady = false;       // 模块是否初始化成功
+static bool     tofValid = false;       // 本次读数是否有效
+static uint16_t tofMm    = 0;           // 距离（毫米）
+static unsigned long tofLastReadMs = 0;
+
+void tofBegin() {
+  Wire.begin(TOF_SDA_PIN, TOF_SCL_PIN);
+  Wire.setClock(400000);
+  tof.setTimeout(500);
+
+  if (!tof.init()) {
+    tofReady = false;
+    Serial.println("激光测距 VL53L1X 初始化失败：检查 VIN 是否接 3.3V、GND 是否共地、SDA/SCL 是否接对。");
+    return;
+  }
+
+  tof.setDistanceMode(TOF_LONG_RANGE ? VL53L1X::Long : VL53L1X::Short);
+  tof.setMeasurementTimingBudget(50000);
+  tof.startContinuous(50);
+  tofReady = true;
+  Serial.printf("激光测距 VL53L1X 已启动：SDA=GPIO%d  SCL=GPIO%d  %s模式\n",
+                TOF_SDA_PIN, TOF_SCL_PIN, TOF_LONG_RANGE ? "远距" : "短距");
+}
+
+void tofUpdate() {
+  if (!tofReady) return;
+  if (millis() - tofLastReadMs < TOF_READ_MS) return;
+  tofLastReadMs = millis();
+
+  uint16_t d = tof.read(false);
+  if (tof.timeoutOccurred()) {
+    tofValid = false;
+    return;
+  }
+  if (tof.ranging_data.range_status == VL53L1X::RangeValid) {
+    tofMm    = d;
+    tofValid = true;
+  } else {
+    tofValid = false;
+  }
+}
+
+bool     tofIsReady()    { return tofReady; }
+bool     tofIsValid()    { return tofValid; }
+uint16_t tofDistanceMm() { return tofMm; }
+
+// 供串口和网页显示的文字
+String tofText() {
+  if (!tofReady) return "模块未连接";
+  if (!tofValid) return "无效（超出量程或信号弱）";
+  char b[32];
+  snprintf(b, sizeof(b), "%u mm (%.2f m)", (unsigned)tofMm, tofMm / 1000.0);
+  return String(b);
+}
 
 /* =====================================================================
    北斗定位模块
@@ -421,7 +492,7 @@ String gpsDateText() {
 
 void gpsPrintReport() {
   Serial.println();
-  Serial.println("================== 北斗定位模块 ==================");
+  Serial.println("============= 北斗定位 / 激光测距 =============");
   Serial.printf("定位状态 : %s\n", st.valid ? "定位成功" : "未定位");
   Serial.printf("定位类型 : %s\n", st.fixType == 3 ? "三维定位(3D)" :
                                     (st.fixType == 2 ? "二维定位(2D)" : "未定位"));
@@ -439,6 +510,7 @@ void gpsPrintReport() {
   Serial.printf("告警     : %s\n", alarmText.c_str());
   Serial.printf("位姿帧   : %s\n", poseFrameHex.c_str());
   Serial.printf("原始GGA  : %s\n", lastGgaLine.c_str());
+  Serial.printf("激光距离 : %s\n", tofText().c_str());
   Serial.println("==================================================");
 }
 /* =====================================================================
@@ -503,6 +575,7 @@ static const char INDEX_HTML[] = R"HTML(
     <div class="card"><div class="k">UTC 时间</div><div class="v small" id="utc">--</div></div>
     <div class="card"><div class="k">日期</div><div class="v small" id="date">--</div></div>
     <div class="card"><div class="k">天线状态</div><div class="v small" id="ant">--</div></div>
+    <div class="card"><div class="k">激光距离</div><div class="v" id="tof">--</div></div>
   </div>
   <h2>位姿帧（文档表27 · 0x01）</h2>
   <div class="hex" id="frame">--</div>
@@ -531,6 +604,7 @@ async function tick(){
     document.getElementById('utc').textContent   = d.utc;
     document.getElementById('date').textContent  = d.date;
     document.getElementById('ant').textContent   = d.antenna;
+    document.getElementById('tof').textContent   = d.tofText;
     document.getElementById('frame').textContent = d.frame;
     document.getElementById('raw').textContent   = d.raw;
     const ml = document.getElementById('maplink');
@@ -590,6 +664,10 @@ String buildJson() {
   j += ",\"alarm\":\"";    j += escapeJson(gpsAlarmText()); j += "\"";
   j += ",\"frame\":\"";    j += gpsPoseFrameHex(); j += "\"";
   j += ",\"raw\":\"";      j += escapeJson(gpsLastGga()); j += "\"";
+  j += ",\"tofReady\":";   j += (tofIsReady() ? "true" : "false");
+  j += ",\"tofValid\":";   j += (tofIsValid() ? "true" : "false");
+  j += ",\"tofMm\":";      j += tofDistanceMm();
+  j += ",\"tofText\":\"";  j += escapeJson(tofText()); j += "\"";
   j += ",\"runSec\":";     j += (millis() / 1000);
   j += "}";
   return j;
@@ -757,6 +835,7 @@ void setup() {
   Serial.println("==================================================");
 
   gpsBegin();   // 初始化北斗定位模块
+  tofBegin();   // 初始化激光测距模块
   netBegin();   // 连接 WiFi 并启动网页服务
 
   Serial.println("初始化完成，开始接收定位数据。");
@@ -764,6 +843,7 @@ void setup() {
 
 void loop() {
   gpsUpdate();   // 读取并解析定位数据（内部每秒刷新告警与位姿帧）
+  tofUpdate();   // 读取激光测距数据
   netLoop();     // 处理网页请求与 WiFi 重连
 
   // 每秒打印一次定位结果到串口监视器
