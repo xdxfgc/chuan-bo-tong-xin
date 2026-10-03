@@ -23,6 +23,8 @@
 #include <WebServer.h>
 #include <Wire.h>
 #include <VL53L1X.h>       // Pololu 的 VL53L1X 库（库管理器里装 VL53L1X）
+#include <SPI.h>
+#include <LoRa.h>          // sandeepmistry 的 LoRa 库（库管理器里装 LoRa）
 
 /* ---------------- 接线与串口配置（需要改动时改这里） ---------------- */
 #define GPS_RX_PIN   17      // ESP32 接收 <- 模块 TX
@@ -86,6 +88,62 @@ IPAddress STATIC_DNS    (192, 168, 31, 1);     // DNS，填网关即可
 #define TOF_LONG_RANGE 1         // 1 = 远距模式（最远约 4 米），0 = 短距模式
 #define TOF_READ_MS    50        // 读取间隔（毫秒）
 
+/* ---------------- LoRa SX1278（433MHz，SPI） ----------------
+   模块 SCK -> GPIO14    MISO -> GPIO12    MOSI -> GPIO13
+        NSS -> GPIO27    RST  -> GPIO32    DIO0 -> 不接（靠轮询，不需要中断脚）
+   这几组脚在经典 ESP32（DevKit）和 ESP32-S3 上都可用。
+   两块板子的射频参数（频率/SF/带宽/同步字）必须完全一致，否则收不到。 */
+static const int  LORA_SCK_PIN  = 14;
+static const int  LORA_MISO_PIN = 12;
+static const int  LORA_MOSI_PIN = 13;
+static const int  LORA_NSS_PIN  = 27;
+static const int  LORA_RST_PIN  = 32;
+static const int  LORA_DIO0_PIN = -1;
+static const long RF_FREQ = 433E6;
+static const int  RF_SF   = 10;
+static const long RF_BW   = 125E3;
+static const int  RF_SYNC = 0x12;
+
+/* 信标数据包的结构（定义必须放在所有函数之前，否则自动生成的函数声明会找不到它） */
+struct TargetPacket {
+  uint32_t seq       = 0;
+  bool     valid     = false;   // 信标定位是否有效
+  double   lat       = 0.0;
+  double   lon       = 0.0;
+  bool     duplicate = false;   // 与上一包同序号（信标没收到 ACK 重发的）
+  int      rssi      = 0;
+  float    snr       = 0.0f;
+};
+
+/* 信标状态查询接口的前置声明（网页模块要用，实现在后面，避免声明顺序问题） */
+bool        beaconLinkUp();
+bool        beaconHasTarget();
+bool        beaconTargetValid();
+uint32_t    beaconSeq();
+double      beaconLat();
+double      beaconLon();
+int         beaconRssi();
+float       beaconSnr();
+bool        beaconHaveDir();
+float       beaconDistM();
+float       beaconBearing();
+const char* beaconDirText();
+
+/* ---------------- SYN6288 语音模块（UART2） ----------------
+   模块 RXD <- GPIO16（必接，ESP32 发、模块收）
+   模块 TXD -> GPIO4（可选，接上能看到模块应答 0x41）
+   模块 VCC -> 5V    GND -> GND（功放吃电流，5V 声音才够大） 喇叭接 SPK+/SPK- */
+static const int      SYN_RX_PIN = 4;
+static const int      SYN_TX_PIN = 16;
+static const uint32_t SYN_BAUD   = 9600;
+static const uint8_t  SYN_VOLUME = 16;
+
+/* ---------------- 播报节奏 ---------------- */
+static const uint32_t LINK_LOST_MS        = 15000;  // 超过 15 秒没收到信标包就播报“失去联系”
+static const uint32_t ANNOUNCE_MIN_GAP_MS = 8000;   // 两次播报最短间隔，避免语音排队
+static const uint32_t ANNOUNCE_MAX_MS     = 20000;  // 坐标没怎么变也最多 20 秒重播一次
+static const float    ANNOUNCE_MIN_MOVE_M = 3.0f;   // 目标移动超过 3 米就重新播报
+
 /* =====================================================================
    激光测距模块 VL53L1X
    ===================================================================== */
@@ -144,6 +202,411 @@ String tofText() {
   char b[32];
   snprintf(b, sizeof(b), "%u mm (%.2f m)", (unsigned)tofMm, tofMm / 1000.0);
   return String(b);
+}
+
+/* =====================================================================
+   SYN6288 播报词（GB2312 字节表）
+   ---------------------------------------------------------------------
+   SYN6288 只吃 GB2312，不能直接发 UTF-8 中文，所以把要用到的词预先算成字节。
+   数字和 [v16] 音量标记是 ASCII，运行时拼上去即可。数组末尾的 0x00 不要删。
+   ===================================================================== */
+
+/* 人员落水， */
+static const uint8_t GB_FELL_OVERBOARD[11] = { 0xC8, 0xCB, 0xD4, 0xB1, 0xC2, 0xE4, 0xCB, 0xAE, 0xA3, 0xAC, 0x00 };
+/* 信标在 */
+static const uint8_t GB_BEACON_AT[7]       = { 0xD0, 0xC5, 0xB1, 0xEA, 0xD4, 0xDA, 0x00 };
+/* 方向 */
+static const uint8_t GB_DIRECTION[5]       = { 0xB7, 0xBD, 0xCF, 0xF2, 0x00 };
+/* ，距离约 */
+static const uint8_t GB_DIST_ABOUT[9]      = { 0xA3, 0xAC, 0xBE, 0xE0, 0xC0, 0xEB, 0xD4, 0xBC, 0x00 };
+/* 米 */
+static const uint8_t GB_METER[3]           = { 0xC3, 0xD7, 0x00 };
+/* 公里 */
+static const uint8_t GB_KILOMETER[5]       = { 0xB9, 0xAB, 0xC0, 0xEF, 0x00 };
+/* ，坐标 */
+static const uint8_t GB_COORD[7]           = { 0xA3, 0xAC, 0xD7, 0xF8, 0xB1, 0xEA, 0x00 };
+/* 北纬 */
+static const uint8_t GB_NORTH[5]           = { 0xB1, 0xB1, 0xCE, 0xB3, 0x00 };
+/* 南纬 */
+static const uint8_t GB_SOUTH[5]           = { 0xC4, 0xCF, 0xCE, 0xB3, 0x00 };
+/* 东经 */
+static const uint8_t GB_EAST[5]            = { 0xB6, 0xAB, 0xBE, 0xAD, 0x00 };
+/* 西经 */
+static const uint8_t GB_WEST[5]            = { 0xCE, 0xF7, 0xBE, 0xAD, 0x00 };
+/* 度 */
+static const uint8_t GB_DEGREE[3]          = { 0xB6, 0xC8, 0x00 };
+/* 收到坐标 */
+static const uint8_t GB_RECV_COORD[9]      = { 0xCA, 0xD5, 0xB5, 0xBD, 0xD7, 0xF8, 0xB1, 0xEA, 0x00 };
+/* ，本方未定位 */
+static const uint8_t GB_SELF_NOPOS[13]     = { 0xA3, 0xAC, 0xB1, 0xBE, 0xB7, 0xBD, 0xCE, 0xB4, 0xB6, 0xA8, 0xCE, 0xBB, 0x00 };
+/* 信标未定位，坐标不可用 */
+static const uint8_t GB_TARGET_NOPOS[23]   = { 0xD0, 0xC5, 0xB1, 0xEA, 0xCE, 0xB4, 0xB6, 0xA8, 0xCE, 0xBB,
+                                               0xA3, 0xAC, 0xD7, 0xF8, 0xB1, 0xEA, 0xB2, 0xBB, 0xBF, 0xC9, 0xD3, 0xC3, 0x00 };
+/* 与信标失去联系 */
+static const uint8_t GB_LINK_LOST[15]      = { 0xD3, 0xEB, 0xD0, 0xC5, 0xB1, 0xEA, 0xCA, 0xA7, 0xC8, 0xA5, 0xC1, 0xAA, 0xCF, 0xB5, 0x00 };
+/* 通信已恢复 */
+static const uint8_t GB_LINK_BACK[11]      = { 0xCD, 0xA8, 0xD0, 0xC5, 0xD2, 0xD1, 0xBB, 0xD6, 0xB8, 0xB4, 0x00 };
+/* 船舶终端已启动，等待信标 */
+static const uint8_t GB_STARTUP[25]        = { 0xB4, 0xAC, 0xB2, 0xB0, 0xD6, 0xD5, 0xB6, 0xCB, 0xD2, 0xD1, 0xC6, 0xF4,
+                                               0xB6, 0xAF, 0xA3, 0xAC, 0xB5, 0xC8, 0xB4, 0xFD, 0xD0, 0xC5, 0xB1, 0xEA, 0x00 };
+/* 你好 */
+static const uint8_t GB_HELLO[5]           = { 0xC4, 0xE3, 0xBA, 0xC3, 0x00 };
+
+/* 8 个方位词：正北 东北 正东 东南 正南 西南 正西 西北 */
+static const uint8_t GB_DIR[8][5] = {
+  { 0xD5, 0xFD, 0xB1, 0xB1, 0x00 },   // 正北
+  { 0xB6, 0xAB, 0xB1, 0xB1, 0x00 },   // 东北
+  { 0xD5, 0xFD, 0xB6, 0xAB, 0x00 },   // 正东
+  { 0xB6, 0xAB, 0xC4, 0xCF, 0x00 },   // 东南
+  { 0xD5, 0xFD, 0xC4, 0xCF, 0x00 },   // 正南
+  { 0xCE, 0xF7, 0xC4, 0xCF, 0x00 },   // 西南
+  { 0xD5, 0xFD, 0xCE, 0xF7, 0x00 },   // 正西
+  { 0xCE, 0xF7, 0xB1, 0xB1, 0x00 },   // 西北
+};
+
+/* =====================================================================
+   方位解算（本船到信标的方向与距离）
+   ===================================================================== */
+
+const char* const GEO_DIR_UTF8[8] = { "正北", "东北", "正东", "东南", "正南", "西南", "正西", "西北" };
+
+double geoTorad(double d) { return d * M_PI / 180.0; }
+double geoTodeg(double r) { return r * 180.0 / M_PI; }
+
+// 两点间大圆距离（米）
+double geoDistanceM(double lat1, double lon1, double lat2, double lon2) {
+  const double R = 6371000.0;
+  double p1 = geoTorad(lat1), p2 = geoTorad(lat2);
+  double dp = geoTorad(lat2 - lat1);
+  double dl = geoTorad(lon2 - lon1);
+  double a = sin(dp / 2) * sin(dp / 2) + cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2);
+  if (a > 1.0) a = 1.0;
+  return 2.0 * R * asin(sqrt(a));
+}
+
+// 从点 1 指向点 2 的方位角（度，0 = 正北，顺时针）
+double geoBearingDeg(double lat1, double lon1, double lat2, double lon2) {
+  double p1 = geoTorad(lat1), p2 = geoTorad(lat2);
+  double dl = geoTorad(lon2 - lon1);
+  double y = sin(dl) * cos(p2);
+  double x = cos(p1) * sin(p2) - sin(p1) * cos(p2) * cos(dl);
+  double b = geoTodeg(atan2(y, x));
+  if (b < 0) b += 360.0;
+  return b;
+}
+
+// 方位角归到 8 个扇区：0 正北 1 东北 2 正东 3 东南 4 正南 5 西南 6 正西 7 西北
+int geoDirSector(double bearingDeg) {
+  int s = (int)((bearingDeg + 22.5) / 45.0) % 8;
+  if (s < 0) s += 8;
+  return s;
+}
+
+const char* geoDirText(int sector) {
+  if (sector < 0 || sector > 7) return "--";
+  return GEO_DIR_UTF8[sector];
+}
+
+/* =====================================================================
+   LoRa 链路（SX1278 433MHz，收信标坐标）
+   ---------------------------------------------------------------------
+   信标(ESP32-C3) 每 2 秒发：  M,<序号>,P,<定位有效>,<纬度>,<经度>
+   本板收到后立刻回：          A,<序号>,C,<本方定位有效>,<纬度>,<经度>
+   同一序号的重传包只回 ACK，不重复显示和播报。
+   ===================================================================== */
+
+static bool     loraReadyFlag = false;
+static uint32_t loraLastSeq   = 0;
+static bool     loraHasSeq    = false;
+
+// 直接读 SX127x 的中断标志寄存器
+uint8_t loraIrqFlags() {
+  SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(LORA_NSS_PIN, LOW);
+  SPI.transfer(0x12);                       // 读 REG_IRQ_FLAGS
+  uint8_t v = SPI.transfer(0x00);
+  digitalWrite(LORA_NSS_PIN, HIGH);
+  SPI.endTransaction();
+  return v;
+}
+
+void loraClearTxDone() {
+  SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(LORA_NSS_PIN, LOW);
+  SPI.transfer(0x92);                       // 写 REG_IRQ_FLAGS
+  SPI.transfer(0x08);                       // 清 TxDone
+  digitalWrite(LORA_NSS_PIN, HIGH);
+  SPI.endTransaction();
+}
+
+// 非阻塞发射 + 轮询 TxDone，这样 DIO0 不用接线
+bool loraTxPacket(const char* s) {
+  LoRa.beginPacket();
+  LoRa.print(s);
+  LoRa.endPacket(true);
+  unsigned long t0 = millis();
+  while (!(loraIrqFlags() & 0x08) && millis() - t0 < 800) delay(1);
+  bool ok = (loraIrqFlags() & 0x08);
+  loraClearTxDone();
+  LoRa.idle();
+  return ok;
+}
+
+// 解析 "M,<序号>,<载荷>"
+bool loraParsePacketString(const String& s, TargetPacket* out) {
+  if (!s.startsWith("M,")) return false;
+  int p1 = s.indexOf(',');
+  int p2 = s.indexOf(',', p1 + 1);
+  if (p1 < 0 || p2 < 0) return false;
+
+  out->seq = (uint32_t)strtoul(s.substring(p1 + 1, p2).c_str(), nullptr, 10);
+
+  String payload = s.substring(p2 + 1);
+  payload.trim();
+
+  int    fix = 1;
+  double la = 0, lo = 0;
+  if (sscanf(payload.c_str(), "P,%d,%lf,%lf", &fix, &la, &lo) != 3) {
+    fix = 1;                                 // 兼容不带 P 标签的 "纬度,经度"
+    if (sscanf(payload.c_str(), "%lf,%lf", &la, &lo) != 2) return false;
+  }
+
+  // 越界或 (0,0) 一律当作无效
+  if (fabs(la) > 90.0 || fabs(lo) > 180.0 || (fabs(la) < 1e-9 && fabs(lo) < 1e-9)) {
+    out->valid = false;
+    out->lat = out->lon = 0.0;
+    return true;
+  }
+
+  out->lat   = la;
+  out->lon   = lo;
+  out->valid = (fix != 0);
+  return true;
+}
+
+bool loraBegin() {
+  /* 这一行不能省：LoRa 库内部只调用不带参数的 SPI.begin()，
+     在 ESP32 上那会把总线开到默认脚（SCK=18/MISO=19/MOSI=23/SS=5），
+     模块接在别的脚上就永远读不到版本号。先自己开好总线，库那次调用就变成空操作。 */
+  SPI.begin(LORA_SCK_PIN, LORA_MISO_PIN, LORA_MOSI_PIN, LORA_NSS_PIN);
+
+  LoRa.setPins(LORA_NSS_PIN, LORA_RST_PIN, LORA_DIO0_PIN);
+  if (!LoRa.begin(RF_FREQ)) {
+    Serial.println("[LoRa] 初始化失败：读不到 SX1278。检查 3V3/GND 和 "
+                   "SCK=14 MISO=12 MOSI=13 NSS=27 RST=32");
+    loraReadyFlag = false;
+    return false;
+  }
+  LoRa.setSpreadingFactor(RF_SF);
+  LoRa.setSignalBandwidth(RF_BW);
+  LoRa.setSyncWord(RF_SYNC);
+  LoRa.setTxPower(17);
+  LoRa.enableCrc();                          // 两端都要开，坏包直接丢
+  Serial.printf("[LoRa] 就绪 %.0fMHz SF%d BW%.0fkHz SYNC=0x%02X\n",
+                RF_FREQ / 1e6, RF_SF, RF_BW / 1e3, RF_SYNC);
+  loraReadyFlag = true;
+  return true;
+}
+
+bool loraIsReady() { return loraReadyFlag; }
+
+bool loraPoll(TargetPacket* out) {
+  if (!loraReadyFlag || out == nullptr) return false;
+
+  int n = LoRa.parsePacket();
+  if (n <= 0) return false;
+
+  String s;
+  s.reserve(n + 1);
+  while (LoRa.available()) s += (char)LoRa.read();
+
+  TargetPacket pkt;
+  pkt.rssi = LoRa.packetRssi();
+  pkt.snr  = LoRa.packetSnr();
+
+  if (!loraParsePacketString(s, &pkt)) {
+    Serial.printf("[LoRa] 收到无法解析的包：%s\n", s.c_str());
+    return false;
+  }
+
+  pkt.duplicate = (loraHasSeq && pkt.seq == loraLastSeq);
+  loraLastSeq = pkt.seq;
+  loraHasSeq  = true;
+
+  *out = pkt;
+  return true;
+}
+
+void loraSendAck(uint32_t seq, bool centerValid, double lat, double lon) {
+  if (!loraReadyFlag) return;
+  char tx[64];
+  if (centerValid) {
+    snprintf(tx, sizeof(tx), "A,%lu,C,1,%.6f,%.6f", (unsigned long)seq, lat, lon);
+  } else {
+    snprintf(tx, sizeof(tx), "A,%lu,C,0,0,0", (unsigned long)seq);
+  }
+  if (!loraTxPacket(tx)) Serial.println("[LoRa] ACK 发送失败：800ms 内没有 TxDone");
+}
+
+int loraChannelRssi() {
+  if (!loraReadyFlag) return 0;
+  return LoRa.rssi();
+}
+
+/* =====================================================================
+   语音播报（SYN6288）
+   ---------------------------------------------------------------------
+   帧格式：0xFD + 长度(2) + 0x01 + 0x00 + GB2312文本 + 异或校验(1)
+   校验必须从帧头 0xFD 开始异或。
+   ===================================================================== */
+
+#define VOICE_TEXT_MAX 128
+
+static HardwareSerial SynSerial(2);          // UART1 被北斗占用，语音用 UART2
+static uint8_t s_vbuf[VOICE_TEXT_MAX];
+static size_t  s_vlen = 0;
+static uint8_t s_vvolume = 16;
+
+#define VADD(frag) voiceTxtAdd((frag), sizeof(frag) - 1)   // 自动去掉结尾的 0x00
+
+void voiceTxtReset() { s_vlen = 0; }
+
+void voiceTxtAdd(const uint8_t* p, size_t n) {
+  if (s_vlen + n > sizeof(s_vbuf)) n = sizeof(s_vbuf) - s_vlen;
+  memcpy(s_vbuf + s_vlen, p, n);
+  s_vlen += n;
+}
+
+void voiceTxtAddAscii(const char* s) { voiceTxtAdd((const uint8_t*)s, strlen(s)); }
+
+// 数字按 ASCII 发过去，SYN6288 会按中文念出来
+void voiceTxtAddNum(double v, int decimals) {
+  char b[24];
+  snprintf(b, sizeof(b), "%.*f", decimals, v);
+  voiceTxtAddAscii(b);
+}
+
+// 音量标签 [v16]，放在文本最前面
+void voiceTxtAddVolume() {
+  char b[8];
+  snprintf(b, sizeof(b), "[v%d]", (int)s_vvolume);
+  voiceTxtAddAscii(b);
+}
+
+void voiceTxtAddLat(double lat) {
+  VADD(GB_COORD);
+  VADD(lat >= 0 ? GB_NORTH : GB_SOUTH);
+  voiceTxtAddNum(fabs(lat), 4);
+  VADD(GB_DEGREE);
+}
+
+void voiceTxtAddLon(double lon) {
+  VADD(GB_COORD);
+  VADD(lon >= 0 ? GB_EAST : GB_WEST);
+  voiceTxtAddNum(fabs(lon), 4);
+  VADD(GB_DEGREE);
+}
+
+void voiceSendFrame() {
+  if (s_vlen == 0) return;
+
+  uint8_t  frame[VOICE_TEXT_MAX + 8];
+  uint16_t dataLen = (uint16_t)s_vlen + 3;     // 命令字1 + 参数1 + 文本n + 校验1
+
+  frame[0] = 0xFD;
+  frame[1] = (dataLen >> 8) & 0xFF;
+  frame[2] = dataLen & 0xFF;
+  frame[3] = 0x01;                             // 命令字：合成播放
+  frame[4] = 0x00;                             // 文本编码：0 = GB2312
+  memcpy(frame + 5, s_vbuf, s_vlen);
+
+  uint8_t xorSum = 0;
+  for (size_t i = 0; i < 5 + s_vlen; i++) xorSum ^= frame[i];
+  frame[5 + s_vlen] = xorSum;
+
+  SynSerial.write(frame, 6 + s_vlen);
+  SynSerial.flush();
+
+  delay(20);                                   // 读掉模块应答 0x41，免得缓冲区堆积
+  int ack = -1;
+  while (SynSerial.available()) ack = SynSerial.read();
+  Serial.printf("[语音] 发送 %u 字节%s\n", (unsigned)s_vlen,
+                ack < 0 ? "" : (ack == 0x41 ? "  模块应答 OK" : "  应答异常"));
+}
+
+void voiceBegin() {
+  SynSerial.begin(SYN_BAUD, SERIAL_8N1, SYN_RX_PIN, SYN_TX_PIN);
+  s_vvolume = (SYN_VOLUME > 16) ? 16 : SYN_VOLUME;
+}
+
+void voiceSetVolume(uint8_t v) {
+  s_vvolume = (v > 16) ? 16 : v;
+  Serial.printf("[语音] 音量已设为 %u/16\n", (unsigned)s_vvolume);
+}
+
+uint8_t voiceVolume() { return s_vvolume; }
+
+void voiceSpeakTest() {
+  voiceTxtReset();
+  voiceTxtAddVolume();
+  VADD(GB_HELLO);
+  voiceSendFrame();
+}
+
+void voiceSpeakStartup() {
+  voiceTxtReset();
+  voiceTxtAddVolume();
+  VADD(GB_STARTUP);
+  voiceSendFrame();
+}
+
+// 播报信标：人员落水 + 方向 + 距离 + 坐标
+void voiceAnnounce(bool haveDir, double tLat, double tLon, float distM, int sector) {
+  voiceTxtReset();
+  voiceTxtAddVolume();
+  VADD(GB_FELL_OVERBOARD);
+
+  if (haveDir) {
+    VADD(GB_BEACON_AT);
+    VADD(GB_DIR[sector & 7]);
+    VADD(GB_DIRECTION);
+    VADD(GB_DIST_ABOUT);
+    if (distM < 1000.0f) {
+      voiceTxtAddNum(distM, 0);
+      VADD(GB_METER);
+    } else {
+      voiceTxtAddNum(distM / 1000.0f, 1);
+      VADD(GB_KILOMETER);
+    }
+  } else {
+    VADD(GB_RECV_COORD);
+  }
+
+  voiceTxtAddLat(tLat);
+  voiceTxtAddLon(tLon);
+  if (!haveDir) VADD(GB_SELF_NOPOS);
+  voiceSendFrame();
+}
+
+void voiceSpeakTargetNoPos() {
+  voiceTxtReset();
+  voiceTxtAddVolume();
+  VADD(GB_TARGET_NOPOS);
+  voiceSendFrame();
+}
+
+void voiceSpeakLinkLost() {
+  voiceTxtReset();
+  voiceTxtAddVolume();
+  VADD(GB_LINK_LOST);
+  voiceSendFrame();
+}
+
+void voiceSpeakLinkBack() {
+  voiceTxtReset();
+  voiceTxtAddVolume();
+  VADD(GB_LINK_BACK);
+  voiceSendFrame();
 }
 
 /* =====================================================================
@@ -576,6 +1039,9 @@ static const char INDEX_HTML[] = R"HTML(
     <div class="card"><div class="k">日期</div><div class="v small" id="date">--</div></div>
     <div class="card"><div class="k">天线状态</div><div class="v small" id="ant">--</div></div>
     <div class="card"><div class="k">激光距离</div><div class="v" id="tof">--</div></div>
+    <div class="card"><div class="k">信标链路</div><div class="v small" id="link">--</div></div>
+    <div class="card"><div class="k">信标距离</div><div class="v" id="dist">--</div></div>
+    <div class="card"><div class="k">信标方位</div><div class="v" id="dir">--</div></div>
   </div>
   <h2>位姿帧（文档表27 · 0x01）</h2>
   <div class="hex" id="frame">--</div>
@@ -590,8 +1056,16 @@ async function tick(){
   try{
     const d = await (await fetch('/data',{cache:'no-store'})).json();
     const b = document.getElementById('banner');
-    if(d.valid){ b.className='banner ok'; b.textContent = '定位成功 · ' + (d.fixType===3?'三维定位':'二维定位'); }
-    else { b.className='banner bad'; b.textContent = d.alarm; }
+    if(d.linkUp && d.targetValid && d.haveDir){
+      b.className='banner bad';
+      b.textContent='收到信标 · ' + d.dirText + '方向 约 ' + d.distM.toFixed(0) + ' 米';
+    } else if(d.valid){
+      b.className='banner ok';
+      b.textContent='定位成功 · ' + (d.fixType===3?'三维定位':'二维定位');
+    } else {
+      b.className='banner bad';
+      b.textContent = d.alarm;
+    }
     document.getElementById('lat').textContent   = d.valid ? d.lat.toFixed(6)+'° N' : '--';
     document.getElementById('lon').textContent   = d.valid ? d.lon.toFixed(6)+'° E' : '--';
     document.getElementById('alt').textContent   = d.valid ? d.alt.toFixed(1)+' m' : '--';
@@ -605,6 +1079,9 @@ async function tick(){
     document.getElementById('date').textContent  = d.date;
     document.getElementById('ant').textContent   = d.antenna;
     document.getElementById('tof').textContent   = d.tofText;
+    document.getElementById('link').textContent  = d.linkUp ? ('在线 ' + d.rssi + ' dBm') : '离线';
+    document.getElementById('dist').textContent  = d.haveDir ? (d.distM.toFixed(0) + ' m') : '--';
+    document.getElementById('dir').textContent   = d.haveDir ? d.dirText : '--';
     document.getElementById('frame').textContent = d.frame;
     document.getElementById('raw').textContent   = d.raw;
     const ml = document.getElementById('maplink');
@@ -668,6 +1145,15 @@ String buildJson() {
   j += ",\"tofValid\":";   j += (tofIsValid() ? "true" : "false");
   j += ",\"tofMm\":";      j += tofDistanceMm();
   j += ",\"tofText\":\"";  j += escapeJson(tofText()); j += "\"";
+  j += ",\"linkUp\":";      j += (beaconLinkUp() ? "true" : "false");
+  j += ",\"hasTarget\":";   j += (beaconHasTarget() ? "true" : "false");
+  j += ",\"targetValid\":"; j += (beaconTargetValid() ? "true" : "false");
+  j += ",\"rssi\":";        j += beaconRssi();
+  j += ",\"haveDir\":";     j += (beaconHaveDir() ? "true" : "false");
+  snprintf(num, sizeof(num), "%.6f", beaconLat()); j += ",\"tLat\":"; j += num;
+  snprintf(num, sizeof(num), "%.6f", beaconLon()); j += ",\"tLon\":"; j += num;
+  snprintf(num, sizeof(num), "%.0f", beaconDistM()); j += ",\"distM\":"; j += num;
+  j += ",\"dirText\":\"";   j += escapeJson(String(beaconDirText())); j += "\"";
   j += ",\"runSec\":";     j += (millis() / 1000);
   j += "}";
   return j;
@@ -822,6 +1308,174 @@ void netLoop() {
 
 bool netConnected() { return WiFi.status() == WL_CONNECTED; }
 String netIP()      { return WiFi.localIP().toString(); }
+/* =====================================================================
+   信标接收与播报（把 LoRa、方位解算、语音串起来）
+   ===================================================================== */
+
+static bool          s_linkUp        = false;   // 链路是否在线
+static unsigned long s_lastPacketMs  = 0;
+static bool          s_hasTarget     = false;   // 收到过信标坐标
+static bool          s_targetValid   = false;   // 信标定位是否有效
+static uint32_t      s_targetSeq     = 0;
+static double        s_tLat = 0.0, s_tLon = 0.0;
+static int           s_rssi = 0;
+static float         s_snr  = 0.0f;
+
+static bool          s_haveDir  = false;        // 本船已定位，能算方向
+static float         s_distM    = 0.0f;
+static float         s_bearing  = 0.0f;
+static int           s_sector   = 0;
+
+static bool          s_announced      = false;  // 播报去重
+static bool          s_reportedNoFix  = false;
+static double        s_annLat = 0.0, s_annLon = 0.0;
+static unsigned long s_lastAnnounceMs = 0;
+static bool          s_lastHaveDir    = false;
+
+static unsigned long s_lastLoraRetryMs = 0;
+
+bool        beaconLinkUp()      { return s_linkUp; }
+bool        beaconHasTarget()   { return s_hasTarget; }
+bool        beaconTargetValid() { return s_targetValid; }
+uint32_t    beaconSeq()         { return s_targetSeq; }
+double      beaconLat()         { return s_tLat; }
+double      beaconLon()         { return s_tLon; }
+int         beaconRssi()        { return s_rssi; }
+float       beaconSnr()         { return s_snr; }
+bool        beaconHaveDir()     { return s_haveDir; }
+float       beaconDistM()       { return s_distM; }
+float       beaconBearing()     { return s_bearing; }
+const char* beaconDirText()     { return s_haveDir ? geoDirText(s_sector) : "--"; }
+
+// 用本船坐标算到信标的方向与距离
+void refreshGeo() {
+  s_haveDir = false;
+  s_distM   = 0.0f;
+  s_bearing = 0.0f;
+  s_sector  = 0;
+
+  const GpsStatus& g = gpsGet();
+  if (s_hasTarget && s_targetValid && g.valid) {
+    s_distM   = (float)geoDistanceM(g.lat, g.lon, s_tLat, s_tLon);
+    s_bearing = (float)geoBearingDeg(g.lat, g.lon, s_tLat, s_tLon);
+    s_sector  = geoDirSector(s_bearing);
+    s_haveDir = true;
+  }
+}
+
+// 播报去重：同一条坐标不反复念，否则移动目标会把语音队列堆爆
+void maybeAnnounce() {
+  if (s_announced && (millis() - s_lastAnnounceMs < ANNOUNCE_MIN_GAP_MS)) return;
+
+  bool first     = !s_announced;
+  bool dirChange = (s_haveDir != s_lastHaveDir);
+  bool moved     = s_announced && s_haveDir &&
+                   geoDistanceM(s_annLat, s_annLon, s_tLat, s_tLon) >= ANNOUNCE_MIN_MOVE_M;
+  bool timeout   = s_announced && (millis() - s_lastAnnounceMs >= ANNOUNCE_MAX_MS);
+
+  if (!(first || dirChange || moved || timeout)) return;
+
+  voiceAnnounce(s_haveDir, s_tLat, s_tLon, s_distM, s_sector);
+
+  s_announced      = true;
+  s_lastHaveDir    = s_haveDir;
+  s_annLat         = s_tLat;
+  s_annLon         = s_tLon;
+  s_lastAnnounceMs = millis();
+}
+
+// 收到一包信标数据
+void onBeaconPacket(const TargetPacket& pkt) {
+  bool wasDown = !s_linkUp;
+
+  s_lastPacketMs = millis();
+  s_linkUp       = true;
+
+  // 先回 ACK，别被显示和播报拖慢
+  const GpsStatus& g = gpsGet();
+  loraSendAck(pkt.seq, g.valid, g.lat, g.lon);
+
+  if (pkt.duplicate) {
+    Serial.printf("[LoRa] #%lu 是重传包，已回 ACK（不重复播报）\n", (unsigned long)pkt.seq);
+    return;
+  }
+
+  s_hasTarget   = true;
+  s_targetValid = pkt.valid;
+  s_targetSeq   = pkt.seq;
+  s_tLat        = pkt.lat;
+  s_tLon        = pkt.lon;
+  s_rssi        = pkt.rssi;
+  s_snr         = pkt.snr;
+
+  Serial.printf("[LoRa] 收到信标 #%lu  定位=%s  %.6f, %.6f  RSSI=%d dBm  SNR=%.1f dB\n",
+                (unsigned long)pkt.seq, pkt.valid ? "有效" : "无效",
+                pkt.lat, pkt.lon, pkt.rssi, pkt.snr);
+
+  if (wasDown && s_announced) voiceSpeakLinkBack();
+
+  refreshGeo();
+
+  if (s_targetValid) {
+    s_reportedNoFix = false;
+    maybeAnnounce();
+  } else if (!s_reportedNoFix) {
+    s_reportedNoFix = true;
+    voiceSpeakTargetNoPos();
+  }
+}
+
+// 串口命令：输入 v0~v16 回车，在线调音量并试听
+void handleSerialCmd(const char* cmd) {
+  const char* p = cmd;
+  while (*p && !isdigit((unsigned char)*p)) p++;
+  if (!*p) {
+    Serial.println("用法：输入 v0~v16 回车，例如 v10（0 最小，16 最大）");
+    return;
+  }
+  int v = atoi(p);
+  if (v > 16) v = 16;
+  if (v < 0)  v = 0;
+  voiceSetVolume((uint8_t)v);
+  voiceSpeakTest();
+}
+
+void pollSerialCmd() {
+  static char   buf[16];
+  static size_t n = 0;
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (n) { buf[n] = '\0'; handleSerialCmd(buf); n = 0; }
+    } else if (n < sizeof(buf) - 1) {
+      buf[n++] = c;
+    } else {
+      n = 0;
+    }
+  }
+}
+
+// 信标相关的串口打印
+void beaconPrintReport() {
+  Serial.println("--------------- 信标链路 ---------------");
+  Serial.printf("链路     : %s   RSSI %d dBm   SNR %.1f dB\n",
+                s_linkUp ? "在线" : "离线", s_rssi, s_snr);
+  if (s_hasTarget) {
+    Serial.printf("信标位置 : %s  #%lu  %.6f, %.6f\n",
+                  s_targetValid ? "有效" : "未定位",
+                  (unsigned long)s_targetSeq, s_tLat, s_tLon);
+  } else {
+    Serial.println("信标位置 : 还没收到数据");
+  }
+  if (s_haveDir) {
+    Serial.printf("搜索引导 : %s方向  约 %.0f 米（方位 %.0f 度）\n",
+                  geoDirText(s_sector), s_distM, s_bearing);
+  } else {
+    Serial.println("搜索引导 : 等本船定位和信标坐标都有效后给出");
+  }
+  Serial.println("--------------------------------------");
+}
+
 static const uint32_t DBG_BAUD = 115200;   // 串口监视器波特率
 
 void setup() {
@@ -830,27 +1484,56 @@ void setup() {
 
   Serial.println();
   Serial.println("==================================================");
-  Serial.println(" 北斗定位模块测试程序");
-  Serial.println(" 通导一体化水上安全终端 · 移动终端定位子系统");
+  Serial.println(" 船舶终端：北斗定位 + 激光测距 + LoRa 信标接收");
+  Serial.println(" 通导一体化水上安全终端 · 移动终端");
   Serial.println("==================================================");
 
-  gpsBegin();   // 初始化北斗定位模块
-  tofBegin();   // 初始化激光测距模块
-  netBegin();   // 连接 WiFi 并启动网页服务
+  gpsBegin();    // 初始化北斗定位模块
+  tofBegin();    // 初始化激光测距模块
+  loraBegin();   // 初始化 LoRa（失败会在 loop 里每 2 秒重试）
+  voiceBegin();  // 初始化语音串口
+  netBegin();    // 连接 WiFi 并启动网页服务
 
-  Serial.println("初始化完成，开始接收定位数据。");
+  delay(1000);           // 等 SYN6288 上电稳定再念第一句
+  voiceSpeakStartup();
+
+  Serial.printf("语音：当前音量 %u/16，串口输入 v0~v16 回车可随时改\n", (unsigned)voiceVolume());
+  Serial.println("初始化完成，开始接收定位与信标数据。");
 }
 
 void loop() {
+  pollSerialCmd();   // 串口命令：在线调音量
+
   gpsUpdate();   // 读取并解析定位数据（内部每秒刷新告警与位姿帧）
   tofUpdate();   // 读取激光测距数据
+
+  // LoRa：射频没起来就重试，起来了就收信标包
+  if (!loraIsReady()) {
+    if (millis() - s_lastLoraRetryMs >= 2000) {
+      s_lastLoraRetryMs = millis();
+      loraBegin();
+    }
+  } else {
+    TargetPacket pkt;
+    if (loraPoll(&pkt)) onBeaconPacket(pkt);
+  }
+
+  // 链路超时：这里必须重新读一次 millis()。刚收到的包会把 s_lastPacketMs
+  // 设成"比本轮 now 还新"的时刻，用旧值相减会变成无符号下溢，刚收到包就被误判。
+  if (s_linkUp && (millis() - s_lastPacketMs > LINK_LOST_MS)) {
+    s_linkUp = false;
+    Serial.println("[链路] 超过 15 秒没收到信标，播报失去联系");
+    voiceSpeakLinkLost();
+  }
+
   netLoop();     // 处理网页请求与 WiFi 重连
 
-  // 每秒打印一次定位结果到串口监视器
+  // 每秒打印一次状态到串口监视器
   static unsigned long lastPrint = 0;
   if (millis() - lastPrint >= 1000) {
     lastPrint = millis();
     gpsPrintReport();
+    beaconPrintReport();
   }
 }
 
