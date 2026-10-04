@@ -100,7 +100,11 @@ static const float BERTH_NEAR_SPEED  = 0.10f;   // 0x03 距岸过近的速度条
 
 static const float BERTH_DONE_M        = 1.00f; // 靠妥判定：距离要小于这个
 static const float BERTH_DONE_SPEED    = 0.03f; // 靠妥判定：速度要小于这个
-static const float BERTH_DONE_STEADY_M = 0.03f; // 靠妥判定：这段时间内变化要小于这个
+/* 靠妥判定的辅助条件：观察窗内的极差要小于这个值。
+   主判据是上面的速度，极差只用来挡住“一个大浪把船推了一截”。
+   原来取 0.03 太严：3.2 秒内变化 3 厘米相当于 0.01 m/s，比速度阈值还严三倍，
+   水面上的船一直在晃，永远达不到；放宽到 0.08 才能容忍正常的波浪起伏。 */
+static const float BERTH_DONE_STEADY_M = 0.08f;
 static const uint32_t BERTH_STEADY_MS  = 3000;  // 靠妥判定与静默共用的观察窗
 
 /* 靠妥判定的三道防护：防止"一开机就在近处"被误判成刚刚靠好 */
@@ -112,7 +116,10 @@ static const float    BERTH_UNDOCK_M       = 1.50f;
 static const uint32_t BERTH_UNDOCK_MS      = 1000;
 static const float    BERTH_SCREEN_SPEED   = 0.01f;  // 移动超过这个速度才占用屏幕
 
-static const float BERTH_QUIET_M       = 0.05f; // 静默判据：观察窗内变化小于它就暂停念距离
+/* 静默判据：拟合速度小于它就暂停念距离。
+   用速度而不是极差——船靠在码头边随浪起伏时距离一直在变，极差永远超标，
+   于是每 2 秒念一次没完没了；而浪造成的往复平均速度接近零，用速度就能安静下来。 */
+static const float BERTH_QUIET_SPEED   = 0.02f;
 static const uint32_t BERTH_ALARM_GAP_MS = 3000; // 告警播报最短间隔
 
 static const uint8_t BERTH_DEBOUNCE_N  = 3;     // 告警去抖：连续多少帧满足才置位

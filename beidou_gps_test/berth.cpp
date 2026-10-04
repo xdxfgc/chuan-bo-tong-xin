@@ -144,8 +144,9 @@ static void berthAnnounce() {
 
   if (s_docked || !s_valid) return;
 
-  // 静默：观察窗内几乎没变化，说明船停稳了，不必反复念同一个数字
-  if (winRange() < BERTH_QUIET_M) return;
+  // 静默：拟合速度接近零，说明船没在动，不必反复念同一个数字。
+  // 用速度而不是极差，这样浪造成的往复波动不会让播报停不下来。
+  if (fabsf(s_speed) < BERTH_QUIET_SPEED) return;
 
   uint32_t gap = 2000;                       // 近处播得勤一点
   if (s_dist >= 2.0f) gap = 2500;            // 远处慢一点
