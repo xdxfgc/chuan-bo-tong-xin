@@ -67,7 +67,7 @@ static unsigned long s_lastPacketMs  = 0;
 static bool          s_hasTarget     = false;
 static bool          s_targetValid   = false;
 static uint32_t      s_targetSeq     = 0;
-static uint8_t       s_targetId      = BEACON_ID_NONE;
+static int           s_targetId      = 0;      // 0 = 老格式帧没带编号
 static double        s_tLat = 0.0, s_tLon = 0.0;
 static int           s_rssi = 0;
 static float         s_snr  = 0.0f;
@@ -92,9 +92,9 @@ static unsigned long s_lastLoraRetryMs = 0;
 /* 编号文字：信标用 11/12/13……，本板是 1；老格式帧不带编号，显示 “--” */
 static char s_idText[8] = "--";
 
-static void updateIdText(uint8_t id) {
-  if (id == BEACON_ID_NONE) snprintf(s_idText, sizeof(s_idText), "--");
-  else                      snprintf(s_idText, sizeof(s_idText), "%u", (unsigned)id);
+static void updateIdText(int id) {
+  if (id <= 0) snprintf(s_idText, sizeof(s_idText), "--");
+  else         snprintf(s_idText, sizeof(s_idText), "%d", id);
 }
 
 static bool          s_alarmActive = false;      // 落水告警活动（需人工确认）
@@ -167,23 +167,23 @@ static void onPacket(const TargetPacket& pkt) {
   loraSendAck(pkt.seq, g.valid, g.lat, g.lon);
 
   if (pkt.duplicate) {
-    Serial.printf("[LoRa] 信标 %u #%lu 是重传包，已回 ACK（不重复播报）\n",
-                  (unsigned)pkt.beaconId, (unsigned long)pkt.seq);
+    Serial.printf("[LoRa] 信标 %d #%lu 是重传包，已回 ACK（不重复播报）\n",
+                  pkt.srcId, (unsigned long)pkt.seq);
     return;
   }
 
   s_hasTarget   = true;
   s_targetValid = pkt.valid;
   s_targetSeq   = pkt.seq;
-  s_targetId    = pkt.beaconId;
-  updateIdText(pkt.beaconId);
+  s_targetId    = pkt.srcId;
+  updateIdText(pkt.srcId);
   s_tLat        = pkt.lat;
   s_tLon        = pkt.lon;
   s_rssi        = pkt.rssi;
   s_snr         = pkt.snr;
 
-  Serial.printf("[LoRa] 收到信标 %u #%lu  定位=%s  %.6f, %.6f  RSSI=%d dBm  SNR=%.1f dB\n",
-                (unsigned)pkt.beaconId, (unsigned long)pkt.seq, pkt.valid ? "有效" : "无效",
+  Serial.printf("[LoRa] 收到信标 %d #%lu  定位=%s  %.6f, %.6f  RSSI=%d dBm  SNR=%.1f dB\n",
+                pkt.srcId, (unsigned long)pkt.seq, pkt.valid ? "有效" : "无效",
                 pkt.lat, pkt.lon, pkt.rssi, pkt.snr);
 
   if (wasDown && s_announced) voiceSpeakLinkBack();
@@ -207,8 +207,8 @@ void beaconBegin() {
   s_linkUp = false;
   s_hasTarget = false;
   s_targetValid = false;
-  s_targetId = BEACON_ID_NONE;
-  updateIdText(BEACON_ID_NONE);
+  s_targetId = 0;
+  updateIdText(0);
   s_announced = false;
   s_reportedNoFix = false;
   s_haveDir = false;
@@ -241,7 +241,7 @@ void beaconPrintReport() {
   Serial.printf("链路     : %s   RSSI %d dBm   SNR %.1f dB\n",
                 s_linkUp ? "在线" : "离线", s_rssi, s_snr);
   if (s_hasTarget) {
-    Serial.printf("信标编号 : %s（0 或 -- 表示老格式帧没带编号）\n", s_idText);
+    Serial.printf("信标编号 : %s（-- 表示老格式帧没带编号）\n", s_idText);
     Serial.printf("信标位置 : %s  #%lu  %.6f, %.6f\n",
                   s_targetValid ? "有效" : "未定位",
                   (unsigned long)s_targetSeq, s_tLat, s_tLon);
@@ -266,7 +266,7 @@ bool        beaconLinkUp()      { return s_linkUp; }
 bool        beaconHasTarget()   { return s_hasTarget; }
 bool        beaconTargetValid() { return s_targetValid; }
 uint32_t    beaconSeq()         { return s_targetSeq; }
-uint8_t     beaconId()          { return s_targetId; }
+int         beaconId()          { return s_targetId; }
 const char* beaconIdText()      { return s_idText; }
 double      beaconLat()         { return s_tLat; }
 double      beaconLon()         { return s_tLon; }

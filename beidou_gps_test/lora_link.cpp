@@ -10,14 +10,14 @@
 static bool     s_ready   = false;
 
 /* ---------------- 重传识别 ----------------
-   以前只记「上一包的序号」，多只信标交替发时会被误判。
+   以前只记「上一包的序号」，多只信标交替发时会被误判成重传。
    现在按发送者分开记：来一只新的就占一格，满了就循环覆盖最老的一格。
-   ID 0（老格式帧）也按一只“发送者”处理。                              */
+   srcId = 0（老格式帧）也按一只“发送者”处理。                          */
 
 #define MAX_TRACKED_SENDERS 8
 
 struct LastSeq {
-  uint8_t  id;
+  int      id;
   uint32_t seq;
   bool     used;
 };
@@ -26,7 +26,7 @@ static LastSeq s_lastSeqs[MAX_TRACKED_SENDERS];
 static uint8_t s_nextSlot = 0;
 
 // 返回 true 表示「这只发送者、这个序号」刚出现过（重传包）
-static bool seenBefore(uint8_t id, uint32_t seq) {
+static bool seenBefore(int id, uint32_t seq) {
   for (int i = 0; i < MAX_TRACKED_SENDERS; i++) {
     if (s_lastSeqs[i].used && s_lastSeqs[i].id == id) {
       bool dup = (s_lastSeqs[i].seq == seq);
@@ -84,37 +84,55 @@ static bool txPacket(const char* s) {
   return ok;
 }
 
-/* ---------------- 解析入帧 ----------------
-   新格式：M,<信标ID>,<序号>,P,<定位有效>,<纬度>,<经度>
-   老格式：M,<序号>,P,<定位有效>,<纬度>,<经度>
+/* ---------------- 解析 "M,<序号>,<载荷>" ---------------- */
 
-   怎么区分：老格式的第 3 个字段直接就是 "P"，新格式第 3 个字段是序号。
-   所以先切出第 2、3 个字段，看第 3 个字段开头是不是 "P" 就知道了。
-   ——不能用“第 2 个字段是不是数字”来判断，因为两种格式那里都是数字。   */
+// 取逗号分隔的第 index 个字段（index 0 就是整句的第一个字段）
+static bool fieldAt(const String& s, int index, String& out) {
+  int cur = 0, start = 0;
+  int n = s.length();
+  for (int i = 0; i <= n; i++) {
+    if (i == n || s[i] == ',') {
+      if (cur == index) {
+        out = s.substring(start, i);
+        out.trim();
+        return true;
+      }
+      cur++;
+      start = i + 1;
+    }
+  }
+  return false;
+}
 
+/* 新格式：M,<ID>,<序号>,P,<定位有效>,<纬度>,<经度>
+   老格式：M,<序号>,P,<定位有效>,<纬度>,<经度>        （没有 ID，当作 srcId = 0）
+   两种都认：第 3 个字段是 "P" 就是老格式，否则是新格式。
+   这样万一以后拿到别的项目里现成的发送端，不用改它也能收。 */
 static bool parsePacketString(const String& s, TargetPacket* out) {
-  out->beaconId = BEACON_ID_NONE;
-
   if (!s.startsWith("M,")) return false;
 
-  int p1 = s.indexOf(',');
-  if (p1 < 0) return false;
-  int p2 = s.indexOf(',', p1 + 1);
-  if (p2 < 0) return false;
+  String f1, f2;
+  if (!fieldAt(s, 1, f1)) return false;
+  if (!fieldAt(s, 2, f2)) return false;
 
-  String field2 = s.substring(p1 + 1, p2);   // 老格式=序号   新格式=信标ID
-  String rest   = s.substring(p2 + 1);       // 老格式="P,..." 新格式="<序号>,P,..."
+  if (f2.startsWith("P") || f2.startsWith("p")) {
+    out->srcId = 0;                                  // 老格式，没有 ID
+    out->seq   = (uint32_t)f1.toInt();
+  } else {
+    out->srcId = f1.toInt();                         // 新格式
+    out->seq   = (uint32_t)f2.toInt();
+  }
 
+  // 载荷统一从 ",P," 之后开始；没有 P 标签时按老格式取
   String payload;
-  if (rest.startsWith("P,")) {               // 老格式
-    out->seq = (uint32_t)strtoul(field2.c_str(), nullptr, 10);
-    payload  = rest;
-  } else {                                   // 新格式：再切一个字段才是序号
-    int p3 = rest.indexOf(',');
-    if (p3 < 0) return false;
-    out->beaconId = (uint8_t)strtoul(field2.c_str(), nullptr, 10);
-    out->seq      = (uint32_t)strtoul(rest.substring(0, p3).c_str(), nullptr, 10);
-    payload       = rest.substring(p3 + 1);
+  int pp = s.indexOf(",P,");
+  if (pp >= 0) {
+    payload = s.substring(pp + 1);                   // 从 'P' 开始
+  } else {
+    int c1 = s.indexOf(',');
+    int c2 = s.indexOf(',', c1 + 1);
+    if (c2 < 0) return false;
+    payload = s.substring(c2 + 1);
   }
   payload.trim();
 
@@ -187,31 +205,35 @@ bool loraPoll(TargetPacket* out) {
     return false;
   }
 
-  pkt.duplicate = seenBefore(pkt.beaconId, pkt.seq);
+  pkt.duplicate = seenBefore(pkt.srcId, pkt.seq);
 
   *out = pkt;
   return true;
 }
 
-/* 应答帧：A,<船ID>,<序号>,C,<本方定位有效>,<纬度>,<经度>
-   带上船 ID 之后，多只信标/多条船同时工作时信标端才分得清。        */
 void loraSendAck(uint32_t seq, bool centerValid, double lat, double lon) {
   if (!s_ready) return;
   char tx[64];
   if (centerValid) {
-    snprintf(tx, sizeof(tx), "A,%u,%lu,C,1,%.6f,%.6f",
-             (unsigned)DEV_ID, (unsigned long)seq, lat, lon);
+    snprintf(tx, sizeof(tx), "A,%d,%lu,C,1,%.6f,%.6f", DEV_ID, (unsigned long)seq, lat, lon);
   } else {
-    snprintf(tx, sizeof(tx), "A,%u,%lu,C,0,0,0",
-             (unsigned)DEV_ID, (unsigned long)seq);
+    snprintf(tx, sizeof(tx), "A,%d,%lu,C,0,0,0", DEV_ID, (unsigned long)seq);
   }
   if (!txPacket(tx)) Serial.println("[LoRa] ACK 发送失败：800ms 内没有 TxDone");
 }
 
-/* 发一帧原文。定期广播（S 帧）用它，省得每个模块都去碰射频细节。 */
-bool loraSendText(const char* s) {
-  if (!s_ready || s == nullptr) return false;
-  return txPacket(s);
+/* 船端定期广播自己的状态，岸基节点靠它掌握船的位置。
+   帧格式：S,<ID>,<序号>,P,<定位有效>,<纬度>,<经度>,<对地速度节>,<航向度>,<卫星数> */
+bool loraSendShipStatus(bool valid, double lat, double lon,
+                        float sogKnots, float cog, int sats) {
+  if (!s_ready) return false;
+
+  static uint32_t s_bcSeq = 0;
+  char tx[96];
+  snprintf(tx, sizeof(tx), "S,%d,%lu,P,%d,%.6f,%.6f,%.2f,%.1f,%d",
+           DEV_ID, (unsigned long)s_bcSeq++, valid ? 1 : 0,
+           lat, lon, sogKnots, cog, sats);
+  return txPacket(tx);
 }
 
 int loraChannelRssi() {

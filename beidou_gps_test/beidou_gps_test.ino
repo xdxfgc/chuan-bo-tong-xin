@@ -19,7 +19,6 @@
      button.h / button.cpp   板载 BOOT 键：短按设出发点，长按开始标定
      cmd.h / cmd.cpp         串口命令：音量、标定、出发点、磁偏角、扫描
      lora_link.h / lora_link.cpp   LoRa 收发与 ACK 应答
-     selfcast.h / selfcast.cpp     本船位置定期广播（发给岸基的 S 帧）
      voice.h / voice.cpp     SYN6288 语音播报
      beacon.h / beacon.cpp   信标接收、方位解算、搜索引导
      net.h / net.cpp         WiFi 与网页服务（页面 + JSON 接口）
@@ -41,7 +40,6 @@
 #include "button.h"
 #include "cmd.h"
 #include "lora_link.h"
-#include "selfcast.h"
 #include "voice.h"
 #include "beacon.h"
 #include "net.h"
@@ -66,7 +64,6 @@ void setup() {
   anchorBegin();  // 走锚监测
   buttonBegin();  // 板载 BOOT 按键
   loraBegin();    // LoRa（失败会在 beaconUpdate 里每 2 秒重试）
-  selfcastBegin();// 本船位置定期广播
   voiceBegin();   // 语音串口
   beaconBegin();  // 信标状态
   netBegin();     // WiFi + 网页服务
@@ -92,7 +89,15 @@ void loop() {
   magUpdate();         // 读磁力计、算航向（内部按速率自己节流）
   berthUpdate();       // 靠泊判断（距离滤波、速度拟合、分级告警、播报）
   beaconUpdate();      // 收信标、算方位、按需播报、判断链路超时
-  selfcastUpdate();    // 每 2 秒广播一次本船位置，给岸基用
+
+  // 每 2 秒广播一次本船状态，岸基节点靠它掌握船的位置（ID 为 DEV_ID）
+  static unsigned long lastBc = 0;
+  if (millis() - lastBc >= BROADCAST_MS) {
+    lastBc = millis();
+    const GpsStatus& g = gpsGet();
+    loraSendShipStatus(g.valid, g.lat, g.lon, g.speedKmh / 1.852f, g.course, g.satsUsed);
+  }
+
   anchorUpdate();      // 锚泊位移监测（用网页“设基准”启动）
   buzzerUpdate();      // 汇总告警等级，驱动蜂鸣器（要放在各模块更新之后）
   netLoop();           // 处理网页请求与 WiFi 重连
