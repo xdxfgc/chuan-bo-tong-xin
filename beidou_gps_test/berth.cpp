@@ -48,6 +48,10 @@ static unsigned long s_lastValidMs   = 0;
 static unsigned long s_beyondMs      = 0;
 static bool          s_beyondRun     = false;
 
+static unsigned long s_enterMs       = 0;      // 进入监测的时刻
+static float         s_maxDist       = 0.0f;   // 进入监测后见过的最大距离
+static unsigned long s_undockMs      = 0;      // 开始远离的时刻
+
 /* ---------------- 工具 ---------------- */
 
 static float median3(float a, float b, float c) {
@@ -59,7 +63,8 @@ static float median3(float a, float b, float c) {
 
 // 观察窗内的极差（最大值 - 最小值），用来判断“稳没稳”
 static float winRange() {
-  if (s_winN < 2) return 0.0f;
+  // 观察窗没攒到一半时返回一个大值：表示"证据不足"，绝不能被当成"距离没变"
+  if (s_winN < WIN_N / 2) return 999.0f;
   float mn = s_win[0], mx = s_win[0];
   for (int i = 0; i < s_winN; i++) {
     if (s_win[i] < mn) mn = s_win[i];
@@ -70,7 +75,8 @@ static float winRange() {
 
 // 用拟合窗里的 (时间, 距离) 做最小二乘，斜率的相反数就是接近速度
 static float calcSpeed() {
-  if (s_fitN < 4) return 0.0f;
+  // 拟合窗必须填满才算数，否则返回 0 会被误当成"速度为零"
+  if (s_fitN < FIT_N) return 0.0f;
 
   int start = (s_fitIdx - s_fitN + FIT_N * 2) % FIT_N;   // 从最旧的一笔开始
   uint32_t t0 = s_fitT[start];
@@ -209,6 +215,8 @@ void berthUpdate() {
     if (s_winN < WIN_N) s_winN++;
 
     s_lastValidMs = now;
+
+    if (s_active && s_dist > s_maxDist) s_maxDist = s_dist;
   }
 
   /* ---- 激活 / 退出 ---- */
@@ -220,6 +228,9 @@ void berthUpdate() {
       s_candCode = 0;
       s_candCnt  = 0;
       s_beyondRun = false;
+      s_undockMs  = 0;
+      s_enterMs   = now;
+      s_maxDist   = s_dist;
       voiceSpeakBerthEnter(s_dist);
       s_lastAnnounceMs = millis();
       Serial.printf("[靠泊] 进入监测，距离 %.2f 米\n", s_dist);
@@ -227,8 +238,14 @@ void berthUpdate() {
     return;
   }
 
-  /* ---- 靠妥判定 ---- */
+  /* 靠妥判定。四道防护缺一不可：
+       拟合窗填满、观察窗攒到一半、进入监测满 2 秒、确实接近过 30 厘米以上。
+     没有这几条防护，一开机就对着近处目标会被直接判成“刚刚靠好”。 */
   if (!s_docked && s_valid &&
+      s_fitN >= FIT_N &&
+      s_winN >= WIN_N / 2 &&
+      (now - s_enterMs) >= BERTH_MIN_WATCH_MS &&
+      (s_maxDist - s_dist) >= BERTH_APPROACH_MIN_M &&
       s_dist < BERTH_DONE_M &&
       fabsf(s_speed) < BERTH_DONE_SPEED &&
       winRange() < BERTH_DONE_STEADY_M) {
@@ -241,11 +258,26 @@ void berthUpdate() {
 
   // 激光量程下限是 4 厘米：刚才还贴着，读数突然没了，说明已经靠上
   if (!s_docked && !s_valid && s_lastDist > 0.0f && s_lastDist < 0.20f &&
+      (s_maxDist - s_lastDist) >= BERTH_APPROACH_MIN_M &&
+      (now - s_enterMs) >= BERTH_MIN_WATCH_MS &&
       (now - s_lastValidMs) > 300) {
     s_docked = true;
     voiceSpeakBerthDone();
     s_lastAnnounceMs = now;
     Serial.println("[靠泊] 读数进入盲区，判定已接触");
+  }
+
+  /* 靠妥之后又离开岸壁：解除“已靠妥”，回到监测状态 */
+  if (s_docked && s_valid && s_dist > BERTH_UNDOCK_M) {
+    if (s_undockMs == 0) s_undockMs = now;
+    else if (now - s_undockMs >= BERTH_UNDOCK_MS) {
+      s_docked   = false;
+      s_undockMs = 0;
+      s_maxDist  = s_dist;
+      Serial.println("[靠泊] 已离开岸壁，恢复监测");
+    }
+  } else if (s_dist <= BERTH_UNDOCK_M) {
+    s_undockMs = 0;
   }
 
   /* ---- 退出 ---- */
@@ -267,6 +299,12 @@ void berthUpdate() {
 bool  berthActive()   { return s_active; }
 bool  berthDocked()   { return s_docked; }
 bool  berthValid()    { return s_valid; }
+bool  berthShowOnScreen() {
+  if (!s_active) return false;
+  if (s_alarm != 0x00) return true;             // 有告警一定要显示
+  if (s_docked)        return true;             // 已靠妥要显示
+  return fabsf(s_speed) >= BERTH_SCREEN_SPEED;  // 正在移动才占用屏幕
+}
 float berthDistanceM(){ return s_dist; }
 float berthSpeedMps() { return s_speed; }
 uint8_t berthAlarmCode() { return s_alarm; }
@@ -308,6 +346,7 @@ void berthUpdate() {}
 bool berthActive() { return false; }
 bool berthDocked() { return false; }
 bool berthValid()  { return false; }
+bool berthShowOnScreen() { return false; }
 float berthDistanceM() { return -1.0f; }
 float berthSpeedMps()  { return 0.0f; }
 uint8_t berthAlarmCode() { return 0x00; }

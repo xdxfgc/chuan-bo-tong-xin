@@ -223,7 +223,7 @@ void oledUpdate() {
   s_lastMs = millis();
 
   u8g2.clearBuffer();
-  if (berthActive())          renderBerth();     // 靠泊是主动操作，优先显示
+  if (berthShowOnScreen())    renderBerth();     // 有告警、已靠妥或正在移动时才占屏
   else if (beaconHasTarget()) renderBeacon();
   else                        renderOwn();
   u8g2.sendBuffer();

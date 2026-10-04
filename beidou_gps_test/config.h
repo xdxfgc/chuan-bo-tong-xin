@@ -103,6 +103,15 @@ static const float BERTH_DONE_SPEED    = 0.03f; // 靠妥判定：速度要小�
 static const float BERTH_DONE_STEADY_M = 0.03f; // 靠妥判定：这段时间内变化要小于这个
 static const uint32_t BERTH_STEADY_MS  = 3000;  // 靠妥判定与静默共用的观察窗
 
+/* 靠妥判定的三道防护：防止"一开机就在近处"被误判成刚刚靠好 */
+static const uint32_t BERTH_MIN_WATCH_MS   = 2000;   // 进入监测后至少观察这么久
+static const float    BERTH_APPROACH_MIN_M = 0.30f;  // 必须实际接近过这么多米
+
+/* 靠妥后又离开岸壁：距离超过这个值并持续一段时间，就解除"已靠妥" */
+static const float    BERTH_UNDOCK_M       = 1.50f;
+static const uint32_t BERTH_UNDOCK_MS      = 1000;
+static const float    BERTH_SCREEN_SPEED   = 0.01f;  // 移动超过这个速度才占用屏幕
+
 static const float BERTH_QUIET_M       = 0.05f; // 静默判据：观察窗内变化小于它就暂停念距离
 static const uint32_t BERTH_ALARM_GAP_MS = 3000; // 告警播报最短间隔
 
