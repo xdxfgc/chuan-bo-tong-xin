@@ -13,6 +13,7 @@
 #include "mag.h"
 #include "beacon.h"
 #include "berth.h"
+#include "anchor.h"
 #include <U8g2lib.h>
 #include <Wire.h>
 #include <math.h>
@@ -218,13 +219,56 @@ static void renderBerth() {
   }
 }
 
+/* ---------------- 画面 D：锚泊监测 ---------------- */
+
+static void renderAnchor() {
+  char buf[32];
+  uint8_t a = anchorAlarmCode();
+
+  /* 第 1 行：标题 + 等级 */
+  drawCN(0, 11, "锚泊监测");
+  if      (a == 0x22) drawCN(96, 11, "严重");
+  else if (a == 0x21) drawCN(96, 11, "提醒");
+  else                drawCN(96, 11, "正常");
+
+  /* 第 2 行：大号位移数字 */
+  float d = anchorDriftM();
+  bool  meter = (d >= 1.0f);
+  if (meter) snprintf(buf, sizeof(buf), "%.2f", d);
+  else       snprintf(buf, sizeof(buf), "%.0f", d * 100.0f);
+
+  u8g2.setFont(u8g2_font_10x20_tf);
+  int w = u8g2.getStrWidth(buf);
+  int x = (128 - w - 28) / 2;
+  if (x < 0) x = 0;
+  u8g2.drawStr(x, 38, buf);
+  drawCN(x + w + 3, 36, meter ? "米" : "厘米");
+
+  /* 第 3 行：漂移方向与速率 */
+  drawCN(0, 52, "漂移");
+  snprintf(buf, sizeof(buf), "%03.0f", anchorDriftDir());
+  drawSM(26, 52, buf);
+  drawCN(50, 52, "度");
+  drawCN(68, 52, "速率");
+  snprintf(buf, sizeof(buf), "%.3f", anchorDriftSpeed());
+  drawSM(94, 52, buf);
+
+  /* 第 4 行：基准坐标 */
+  drawCN(0, 63, "基准");
+  snprintf(buf, sizeof(buf), "%.4f %.4f", anchorRefLat(), anchorRefLon());
+  drawSM(26, 63, buf);
+}
+
 void oledUpdate() {
   if (millis() - s_lastMs < OLED_REFRESH_MS) return;
   s_lastMs = millis();
 
   u8g2.clearBuffer();
-  if (berthShowOnScreen())    renderBerth();     // 有告警、已靠妥或正在移动时才占屏
-  else if (beaconHasTarget()) renderBeacon();
-  else                        renderOwn();
+  /* 画面优先级：落水告警最高，其次是靠泊，然后是锚泊，最后是信标与本船状态 */
+  if (beaconAlarmActive())    renderBeacon();
+  else if (berthShowOnScreen()) renderBerth();
+  else if (anchorActive())      renderAnchor();
+  else if (beaconHasTarget())   renderBeacon();
+  else                          renderOwn();
   u8g2.sendBuffer();
 }

@@ -98,6 +98,14 @@ static const float BERTH_SPEED_ALARM = 0.30f;   // 0x02 接近速度过大（严
 static const float BERTH_NEAR_M      = 0.50f;   // 0x03 距岸过近的距离条件
 static const float BERTH_NEAR_SPEED  = 0.10f;   // 0x03 距岸过近的速度条件
 
+/* 告警的解除阈值（滞回）：触发用上面那组数字，解除用下面这组，两者留约 10% 的差。
+   如果触发和解除用同一个数，速度正好在阈值上下浮动时，蜂鸣器会一秒响一次停一次
+   地“哒哒”跳；留出差值之后就不会了。 */
+static const float BERTH_SPEED_WARN_OFF  = 0.13f;   // 0x01 解除：速度降到这里以下
+static const float BERTH_SPEED_ALARM_OFF = 0.27f;   // 0x02 解除
+static const float BERTH_NEAR_M_OFF      = 0.55f;   // 0x03 解除：距离回升到这里以上
+static const float BERTH_NEAR_SPEED_OFF  = 0.09f;   // 0x03 解除：速度降到这里以下
+
 static const float BERTH_DONE_M        = 1.00f; // 靠妥判定：距离要小于这个
 static const float BERTH_DONE_SPEED    = 0.03f; // 靠妥判定：速度要小于这个
 /* 靠妥判定的辅助条件：观察窗内的极差要小于这个值。
@@ -181,5 +189,44 @@ static const float    ANNOUNCE_MIN_MOVE_M = 3.0f;   // 目标移动超过 3 米�
 
 /* ---------------- 调试串口（USB） ---------------- */
 static const uint32_t DBG_BAUD = 115200;
+
+/* ---------------- 蜂鸣器（有源，3.3V 供电） ----------------
+   VCC -> 3.3V    GND -> GND    I/O -> GPIO33
+
+   触发极性看手上的模块：
+     MH-FMG：高电平触发（高响、低停）  → BUZZER_ACTIVE_LOW 设 0
+     MH-FMD：低电平触发（低响、高停）  → BUZZER_ACTIVE_LOW 设 1
+
+   注意：模块说明书里的示例写的是 GPIO27，但 27 已经被 LoRa 的 RST 占用了；
+   GPIO33 完全空闲，没有任何特殊功能，用它最省心。                     */
+#define BUZZER_ENABLE 1
+#define BUZZER_PIN    33
+#define BUZZER_ACTIVE_LOW 0    // 1 = MH-FMD（低电平触发）  0 = MH-FMG（高电平触发）
+
+/* ---------------- 走锚监测（锚泊位移监测） ----------------
+   靠好或抛锚稳定后，用网页上的“设基准”按钮把当前位置记为原点，之后持续监测位移。
+   判定按文档附录 B：
+     0x21 疑似走锚：位移超限并持续一段时间，提醒级
+     0x22 走锚    ：位移持续增大且速率没有放缓，严重级
+
+   ⚠ 北斗单点定位误差约 2.5 米，而阈值默认才 2 米，所以必须对**位置**做长时间
+     平滑（不是对位移平滑——位移恒为正，平均会带正偏置），否则船没动噪声就把告警刷满。 */
+#define ANCHOR_ENABLE 1
+
+static const float    ANCHOR_DRIFT_M     = 2.00f;   // 位移阈值（文档默认 2 米）
+static const float    ANCHOR_DRIFT_OFF_M = 1.80f;   // 解除阈值（滞回）
+static const uint32_t ANCHOR_HOLD_MS     = 60000;   // 疑似走锚要持续这么久
+static const float    ANCHOR_SLOPE_DRAG  = 0.020f;  // 位移增长率门限（米每秒），超过算“持续增大”
+#define ANCHOR_SAMPLE_MS 2000UL                     // 采样间隔
+
+#define ANCHOR_POS_N   15       // 位置平滑窗（15 × 2 秒 = 30 秒）
+#define ANCHOR_HIST_N  30       // 位移历史（30 × 2 秒 = 60 秒）
+
+/* 激光辅助：停靠在码头时，与岸壁距离的变化比 GNSS 灵敏得多（毫米级）。
+   横向位移超过这个值并持续一段时间，也判疑似走锚。 */
+static const float    ANCHOR_LASER_D_M   = 0.50f;
+static const uint32_t ANCHOR_LASER_MS    = 10000;
+
+static const uint32_t ANCHOR_REPEAT_MS   = 20000;   // 告警持续时的重播间隔
 
 #endif

@@ -33,4 +33,9 @@ float       beaconRelBearing();  // 信标相对船头的角度，0=正前方，
 const char* beaconRelDirText();  // 相对方位文字，如“左前方”
 float       beaconArrowBearing();// 画箭头该用的角度（能用相对就用相对）
 
+/* 落水告警状态（供蜂鸣器汇总，需人工确认才解除） */
+bool beaconAlarmActive();        // 落水告警是否处于活动状态
+bool beaconEverLinked();         // 上电以来是否收到过信标包
+void beaconAcknowledge();        // 人工确认，解除落水告警
+
 #endif

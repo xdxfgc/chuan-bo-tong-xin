@@ -218,3 +218,37 @@ void voiceSpeakBerthDone() {
   VADD(GB_BERTH_DONE);
   voiceSend();
 }
+
+/* ---------------- 走锚监测 ---------------- */
+
+void voiceSpeakAnchorOn() {
+  txtReset();
+  txtAddVolume();
+  VADD(GB_ANCHOR_ON);
+  voiceSend();
+}
+
+void voiceSpeakAnchorSuspect(float driftM, int sector) {
+  txtReset();
+  txtAddVolume();
+  VADD(GB_ANCHOR_SUSPECT);
+  txtAddNum(driftM, 1);
+  VADD(GB_METER);
+  VADD(GB_DRIFT_DIR);
+  VADD(GB_DIR[sector & 7]);
+  voiceSend();
+}
+
+void voiceSpeakAnchorDragging() {
+  txtReset();
+  txtAddVolume();
+  VADD(GB_ANCHOR_DRAG);
+  voiceSend();
+}
+
+void voiceSpeakAnchorOk() {
+  txtReset();
+  txtAddVolume();
+  VADD(GB_ANCHOR_OK);
+  voiceSend();
+}

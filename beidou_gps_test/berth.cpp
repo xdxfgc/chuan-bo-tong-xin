@@ -108,9 +108,20 @@ static void clearFilters() {
 static void updateAlarm() {
   uint8_t want = 0x00;
   if (s_valid) {
-    if (s_speed > BERTH_SPEED_ALARM)                        want = 0x02;
-    else if (s_dist < BERTH_NEAR_M && s_speed > BERTH_NEAR_SPEED) want = 0x03;
-    else if (s_speed > BERTH_SPEED_WARN)                    want = 0x01;
+    /* 带滞回的判断：当前生效的那一级用“解除阈值”，其它级用“触发阈值”。
+       这样既不会在阈值附近反复跳，又不会耽误升级——
+       比如当前是提醒级（0x01）、速度冲到 0.31，上面的 0x02 条件用触发阈值判断，
+       立刻就能升上去。 */
+    bool keep2 = (s_alarm == 0x02) ? (s_speed > BERTH_SPEED_ALARM_OFF)
+                                   : (s_speed > BERTH_SPEED_ALARM);
+    bool keep3 = (s_alarm == 0x03) ? (s_dist < BERTH_NEAR_M_OFF && s_speed > BERTH_NEAR_SPEED_OFF)
+                                   : (s_dist < BERTH_NEAR_M     && s_speed > BERTH_NEAR_SPEED);
+    bool keep1 = (s_alarm == 0x01) ? (s_speed > BERTH_SPEED_WARN_OFF)
+                                   : (s_speed > BERTH_SPEED_WARN);
+
+    if      (keep2) want = 0x02;
+    else if (keep3) want = 0x03;
+    else if (keep1) want = 0x01;
   }
 
   if (want == s_alarm) { s_candCode = 0; s_candCnt = 0; return; }

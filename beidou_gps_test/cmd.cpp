@@ -6,6 +6,8 @@
 #include "voice.h"
 #include "mag.h"
 #include "berth.h"
+#include "buzzer.h"
+#include "anchor.h"
 
 static char   s_buf[32];
 static size_t s_n = 0;
@@ -20,6 +22,11 @@ static void printHelp() {
   Serial.println("  decl -5.2   设置磁偏角（真北修正）");
   Serial.println("  mag         立刻打印一行磁力计数据");
   Serial.println("  dock        打印靠泊状态（距离、接近速度、告警）");
+  Serial.println("  ack         确认落水告警（停止蜂鸣器）");
+  Serial.println("  buzz on/off 打开或关闭蜂鸣器");
+  Serial.println("  moor set    把当前位置设为锚泊基准，开始走锚监测");
+  Serial.println("  moor clear  清除锚泊基准，停止监测");
+  Serial.println("  moor        打印锚泊状态（位移、漂移方向与速率）");
   Serial.println("  scan        扫描磁力计所在的 I2C 总线");
   Serial.println("------------------------------------------");
 }
@@ -54,6 +61,24 @@ static void runCmd(char* cmd) {
   if (low == "mag" || low == "data") { cmdPrintMagLine(); return; }
 
   if (low == "dock") { berthPrintReport(); return; }
+
+  if (low == "ack") { buzzerAcknowledge(); return; }
+
+  if (low.startsWith("moor")) {
+    String arg = low.substring(4); arg.trim();
+    if      (arg == "set")   anchorSetReference();
+    else if (arg == "clear") anchorClearReference();
+    else                     anchorPrintReport();
+    return;
+  }
+
+  if (low.startsWith("buzz")) {
+    String arg = low.substring(4); arg.trim();
+    if      (arg == "on")  buzzerSetUserOn(true);
+    else if (arg == "off") buzzerSetUserOn(false);
+    else Serial.printf("蜂鸣器：%s（buzz on / buzz off 可切换）\n", buzzerStateText().c_str());
+    return;
+  }
 
   if (low == "zero") {
     magZeroHere(msg);

@@ -33,4 +33,10 @@ void voiceSpeakBerthDistance(float distM, bool soon);// “距离一米八” / 
 void voiceSpeakBerthAlarm(uint8_t code);             // 0x01 速度偏大 / 0x02 速度过大 / 0x03 距岸过近
 void voiceSpeakBerthDone();                          // “靠泊完成”
 
+/* ---------------- 走锚监测的播报 ---------------- */
+void voiceSpeakAnchorOn();                           // “锚泊监测已启动，基准位置已记录”
+void voiceSpeakAnchorSuspect(float driftM, int sector); // “疑似走锚，位移2.4米，漂移方向东南”
+void voiceSpeakAnchorDragging();                     // “船正在走锚，请立即处理”
+void voiceSpeakAnchorOk();                           // “位移已回到正常范围”
+
 #endif

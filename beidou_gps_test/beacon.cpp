@@ -88,6 +88,10 @@ static bool          s_lastHaveDir    = false;
 
 static unsigned long s_lastLoraRetryMs = 0;
 
+static bool          s_alarmActive = false;      // 落水告警活动（需人工确认）
+static bool          s_acked       = false;      // 本次落水事件是否已确认
+static bool          s_everLinked  = false;      // 上电以来是否收到过包
+
 /* ---------------- 内部逻辑 ---------------- */
 
 // 用本船坐标算到信标的方向与距离
@@ -147,6 +151,7 @@ static void onPacket(const TargetPacket& pkt) {
 
   s_lastPacketMs = millis();
   s_linkUp       = true;
+  s_everLinked   = true;
 
   // 先回 ACK，别被显示和播报拖慢
   const GpsStatus& g = gpsGet();
@@ -174,6 +179,8 @@ static void onPacket(const TargetPacket& pkt) {
   refreshGeo();
 
   if (s_targetValid) {
+    // 落水告警：收到有效坐标就置位，直到人工确认；确认后同一个事件不再重复触发
+    if (!s_acked) s_alarmActive = true;
     s_reportedNoFix = false;
     maybeAnnounce();
   } else if (!s_reportedNoFix) {
@@ -209,6 +216,7 @@ void beaconUpdate() {
   // 设成「比本轮 now 还新」的时刻，用旧值相减会变成无符号下溢，刚收到包就被误判。
   if (s_linkUp && (millis() - s_lastPacketMs > LINK_LOST_MS)) {
     s_linkUp = false;
+    s_acked  = false;          // 失联视为本次事件结束，之后恢复可重新报警
     Serial.println("[链路] 超过 15 秒没收到信标，播报失去联系");
     voiceSpeakLinkLost();
   }
@@ -256,3 +264,11 @@ bool        beaconUseRel()      { return s_useRel; }
 float       beaconRelBearing()  { return s_relBearing; }
 const char* beaconRelDirText()  { return s_useRel ? GEO_REL_UTF8[s_relSector] : "--"; }
 float       beaconArrowBearing(){ return s_useRel ? s_relBearing : s_bearing; }
+
+bool beaconAlarmActive() { return s_alarmActive; }
+bool beaconEverLinked()  { return s_everLinked; }
+
+void beaconAcknowledge() {
+  s_alarmActive = false;
+  s_acked       = true;
+}
