@@ -12,6 +12,7 @@
 #include "imu.h"
 #include "mag.h"
 #include "beacon.h"
+#include "berth.h"
 #include <U8g2lib.h>
 #include <Wire.h>
 #include <math.h>
@@ -168,12 +169,62 @@ static void renderOwn() {
 
 /* ---------------- 对外接口 ---------------- */
 
+/* ---------------- 画面 C：靠泊 ---------------- */
+
+static void renderBerth() {
+  char buf[32];
+  uint8_t a = berthAlarmCode();
+
+  /* 第 1 行：标题 + 等级 */
+  drawCN(0, 11, "靠泊监测");
+  if (berthDocked())               drawCN(96, 11, "已靠妥");
+  else if (a == 0x02 || a == 0x03) drawCN(96, 11, "严重");
+  else if (a == 0x01)              drawCN(96, 11, "提醒");
+  else                             drawCN(96, 11, "正常");
+
+  /* 第 2 行：大号距离数字 + 单位 */
+  if (berthValid() && berthDistanceM() >= 0.0f) {
+    float d = berthDistanceM();
+    bool  meter = (d >= 1.0f);
+    if (meter) snprintf(buf, sizeof(buf), "%.2f", d);
+    else       snprintf(buf, sizeof(buf), "%.0f", d * 100.0f);
+
+    u8g2.setFont(u8g2_font_10x20_tf);
+    int w = u8g2.getStrWidth(buf);
+    int x = (128 - w - 28) / 2;
+    if (x < 0) x = 0;
+    u8g2.drawStr(x, 38, buf);
+    drawCN(x + w + 3, 36, meter ? "米" : "厘米");
+  } else {
+    drawCN(34, 34, "测距无效");
+  }
+
+  /* 第 3 行：接近速度 */
+  drawCN(0, 52, "接近");
+  snprintf(buf, sizeof(buf), "%.2f", berthSpeedMps());
+  drawSM(26, 52, buf);
+  drawCN(26 + smW(buf) + 2, 52, "米每秒");
+
+  /* 第 4 行：状态或告警 */
+  if (berthDocked()) {
+    drawCN(0, 63, "靠泊完成");
+  } else {
+    switch (a) {
+      case 0x01: drawCN(0, 63, "接近速度偏大"); break;
+      case 0x02: drawCN(0, 63, "接近速度过大"); break;
+      case 0x03: drawCN(0, 63, "距岸过近");     break;
+      default:   drawCN(0, 63, "缓慢接近中");   break;
+    }
+  }
+}
+
 void oledUpdate() {
   if (millis() - s_lastMs < OLED_REFRESH_MS) return;
   s_lastMs = millis();
 
   u8g2.clearBuffer();
-  if (beaconHasTarget()) renderBeacon();
-  else                   renderOwn();
+  if (berthActive())          renderBerth();     // 靠泊是主动操作，优先显示
+  else if (beaconHasTarget()) renderBeacon();
+  else                        renderOwn();
   u8g2.sendBuffer();
 }

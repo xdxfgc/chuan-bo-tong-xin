@@ -13,6 +13,7 @@
      oled.h / oled.cpp       OLED 显示（SSD1306，与激光共用 I2C 总线）
      imu.h / imu.cpp         MPU6050 六轴姿态（同样挂在 I2C 总线上）
      mag.h / mag.cpp         磁力计 GY-282（HMC5983）：航向、标定，走独立的 Wire1
+     berth.h / berth.cpp     靠泊辅助：距离滤波、接近速度、分级告警、靠妥判定
      button.h / button.cpp   板载 BOOT 键：短按设出发点，长按开始标定
      cmd.h / cmd.cpp         串口命令：音量、标定、出发点、磁偏角、扫描
      lora_link.h / lora_link.cpp   LoRa 收发与 ACK 应答
@@ -31,6 +32,7 @@
 #include "oled.h"
 #include "imu.h"
 #include "mag.h"
+#include "berth.h"
 #include "button.h"
 #include "cmd.h"
 #include "lora_link.h"
@@ -53,6 +55,7 @@ void setup() {
   oledBegin();    // OLED 显示（与激光共用 I2C 总线）
   imuBegin();     // MPU6050 姿态（同一条 I2C 总线）
   magBegin();     // 磁力计（独立的 Wire1：GPIO25/26）
+  berthBegin();   // 靠泊辅助（用激光测距）
   buttonBegin();  // 板载 BOOT 按键
   loraBegin();    // LoRa（失败会在 beaconUpdate 里每 2 秒重试）
   voiceBegin();   // 语音串口
@@ -78,6 +81,7 @@ void loop() {
   oledUpdate();        // 刷屏（内部 250ms 限速）
   imuUpdate();         // 读姿态（50Hz）
   magUpdate();         // 读磁力计、算航向（内部按速率自己节流）
+  berthUpdate();       // 靠泊判断（距离滤波、速度拟合、分级告警、播报）
   beaconUpdate();      // 收信标、算方位、按需播报、判断链路超时
   netLoop();           // 处理网页请求与 WiFi 重连
 
@@ -89,6 +93,7 @@ void loop() {
     tofPrintReport();
     imuPrintReport();
     cmdPrintMagLine();
+    berthPrintReport();
     beaconPrintReport();
   }
 }

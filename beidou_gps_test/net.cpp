@@ -8,6 +8,7 @@
 #include "imu.h"
 #include "mag.h"
 #include "beacon.h"
+#include "berth.h"
 
 static WebServer server(WEB_PORT);
 static unsigned long lastWifiTry = 0;
@@ -78,6 +79,9 @@ static const char INDEX_HTML[] = R"HTML(
     <div class="card"><div class="k">信标方位</div><div class="v" id="dir">--</div></div>
     <div class="card"><div class="k">航向角</div><div class="v" id="hdg">--</div></div>
     <div class="card"><div class="k">磁力计</div><div class="v small" id="mag">--</div></div>
+    <div class="card"><div class="k">靠泊距离</div><div class="v" id="bdist">--</div></div>
+    <div class="card"><div class="k">接近速度</div><div class="v" id="bspd">--</div></div>
+    <div class="card"><div class="k">靠泊状态</div><div class="v small" id="bstate">--</div></div>
   </div>
   <h2>位姿帧（文档表27 · 0x01）</h2>
   <div class="hex" id="frame">--</div>
@@ -95,6 +99,9 @@ async function tick(){
     if(d.linkUp && d.targetValid && d.haveDir){
       b.className='banner bad';
       b.textContent='收到信标 · ' + d.dirText + '方向 约 ' + d.distM.toFixed(0) + ' 米';
+    } else if(d.berthAlarm){
+      b.className='banner bad';
+      b.textContent='靠泊告警 · ' + d.berthAlarmText;
     } else if(d.valid){
       b.className='banner ok';
       b.textContent='定位成功 · ' + (d.fixType===3?'三维定位':'二维定位');
@@ -121,6 +128,11 @@ async function tick(){
     document.getElementById('dir').textContent   = d.haveDir ? (d.useRel ? d.relDirText : d.dirText) : '--';
     document.getElementById('hdg').textContent   = (d.magOk && d.magCal) ? (d.heading.toFixed(0) + '°') : '--';
     document.getElementById('mag').textContent   = d.magOk ? (d.magCal ? '已标定' : '未标定') : '未连接';
+    document.getElementById('bdist').textContent = d.berthValid ? d.berthDistText : '--';
+    document.getElementById('bspd').textContent  = d.berthActive ? (d.berthSpeed.toFixed(2) + ' m/s') : '--';
+    document.getElementById('bstate').textContent = d.berthDocked ? '已靠妥'
+                                                  : (d.berthAlarm ? d.berthAlarmText
+                                                  : (d.berthActive ? '监测中' : '待机'));
     document.getElementById('frame').textContent = d.frame;
     document.getElementById('raw').textContent   = d.raw;
     const ml = document.getElementById('maplink');
@@ -204,6 +216,14 @@ static String buildJson() {
   j += ",\"magCal\":";      j += (magCalibrated() ? "true" : "false");
   snprintf(num, sizeof(num), "%.1f", magHeadingDeg()); j += ",\"heading\":"; j += num;
   snprintf(num, sizeof(num), "%.1f", magDeviation());  j += ",\"headingDev\":"; j += num;
+  j += ",\"berthActive\":"; j += (berthActive() ? "true" : "false");
+  j += ",\"berthDocked\":"; j += (berthDocked() ? "true" : "false");
+  j += ",\"berthValid\":";  j += (berthValid() ? "true" : "false");
+  snprintf(num, sizeof(num), "%.2f", berthDistanceM()); j += ",\"berthDist\":"; j += num;
+  snprintf(num, sizeof(num), "%.3f", berthSpeedMps());  j += ",\"berthSpeed\":"; j += num;
+  j += ",\"berthAlarm\":";  j += berthAlarmCode();
+  j += ",\"berthAlarmText\":\""; j += escapeJson(berthAlarmText()); j += "\"";
+  j += ",\"berthDistText\":\"";  j += escapeJson(berthDistanceText()); j += "\"";
   j += ",\"runSec\":";     j += (millis() / 1000);
   j += "}";
   return j;

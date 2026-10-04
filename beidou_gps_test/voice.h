@@ -27,4 +27,10 @@ void voiceSpeakTargetNoPos();      // 信标未定位
 void voiceSpeakLinkLost();         // 与信标失去联系
 void voiceSpeakLinkBack();         // 通信已恢复
 
+/* ---------------- 靠泊辅助的播报 ---------------- */
+void voiceSpeakBerthEnter(float distM);              // “靠泊监测，距离三米四”
+void voiceSpeakBerthDistance(float distM, bool soon);// “距离一米八” / “距离三十厘米，即将靠妥”
+void voiceSpeakBerthAlarm(uint8_t code);             // 0x01 速度偏大 / 0x02 速度过大 / 0x03 距岸过近
+void voiceSpeakBerthDone();                          // “靠泊完成”
+
 #endif

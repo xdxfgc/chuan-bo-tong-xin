@@ -169,3 +169,52 @@ void voiceSpeakLinkBack() {
   VADD(GB_LINK_BACK);
   voiceSend();
 }
+
+/* ---------------- 靠泊辅助 ---------------- */
+
+// 距离怎么念：1 米以上念“距离三点二米”，1 米以下换算成厘米念“距离八十厘米”
+static void txtAddDistance(float d) {
+  VADD(GB_DISTANCE);
+  if (d >= 1.0f) {
+    txtAddNum(d, 1);
+    VADD(GB_METER);
+  } else {
+    txtAddNum(d * 100.0f, 0);
+    VADD(GB_CENTIMETER);
+  }
+}
+
+void voiceSpeakBerthEnter(float distM) {
+  txtReset();
+  txtAddVolume();
+  VADD(GB_BERTH_WATCH);
+  txtAddDistance(distM);
+  voiceSend();
+}
+
+void voiceSpeakBerthDistance(float distM, bool soon) {
+  txtReset();
+  txtAddVolume();
+  txtAddDistance(distM);
+  if (soon) VADD(GB_SOON_DOCK);
+  voiceSend();
+}
+
+void voiceSpeakBerthAlarm(uint8_t code) {
+  txtReset();
+  txtAddVolume();
+  switch (code) {
+    case 0x01: VADD(GB_ALM_SPEED_HI);  break;
+    case 0x02: VADD(GB_ALM_SPEED_MAX); break;
+    case 0x03: VADD(GB_ALM_TOO_NEAR);  break;
+    default: return;
+  }
+  voiceSend();
+}
+
+void voiceSpeakBerthDone() {
+  txtReset();
+  txtAddVolume();
+  VADD(GB_BERTH_DONE);
+  voiceSend();
+}

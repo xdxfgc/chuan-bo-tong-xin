@@ -84,6 +84,30 @@ static const uint32_t IMU_READ_MS = 20;         // 读取间隔（50Hz，对应�
 #define BTN_LONG_MS     3000
 #define BTN_CAL_SECONDS 15
 
+/* ---------------- 靠泊辅助（只用激光测距，不需要额外硬件） ----------------
+   靠近到 BERTH_ENTER_M 以内自动开始监测，退出时用 BERTH_EXIT_M 做滞回。
+   阈值按文档附录 B 的告警码取值，实测觉得太敏感或太迟钝就改这里。        */
+#define BERTH_ENABLE 1
+
+static const float BERTH_ENTER_M     = 3.5f;    // 进入监测的距离（激光量程 4 米，留余量）
+static const float BERTH_EXIT_M      = 3.8f;    // 退出监测的距离（滞回 0.3 米）
+static const uint32_t BERTH_EXIT_MS  = 3000;    // 超过退出距离要持续这么久才结束
+
+static const float BERTH_SPEED_WARN  = 0.15f;   // 0x01 接近速度偏大（提醒级）
+static const float BERTH_SPEED_ALARM = 0.30f;   // 0x02 接近速度过大（严重级）
+static const float BERTH_NEAR_M      = 0.50f;   // 0x03 距岸过近的距离条件
+static const float BERTH_NEAR_SPEED  = 0.10f;   // 0x03 距岸过近的速度条件
+
+static const float BERTH_DONE_M        = 1.00f; // 靠妥判定：距离要小于这个
+static const float BERTH_DONE_SPEED    = 0.03f; // 靠妥判定：速度要小于这个
+static const float BERTH_DONE_STEADY_M = 0.03f; // 靠妥判定：这段时间内变化要小于这个
+static const uint32_t BERTH_STEADY_MS  = 3000;  // 靠妥判定与静默共用的观察窗
+
+static const float BERTH_QUIET_M       = 0.05f; // 静默判据：观察窗内变化小于它就暂停念距离
+static const uint32_t BERTH_ALARM_GAP_MS = 3000; // 告警播报最短间隔
+
+static const uint8_t BERTH_DEBOUNCE_N  = 3;     // 告警去抖：连续多少帧满足才置位
+
 /* ---------------- LoRa SX1278（433MHz，SPI） ----------------
    SCK->GPIO14  MISO->GPIO12  MOSI->GPIO13  NSS->GPIO27  RST->GPIO32
    DIO0 不接：程序用轮询，不需要中断脚。

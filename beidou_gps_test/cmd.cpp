@@ -5,6 +5,7 @@
 #include "cmd.h"
 #include "voice.h"
 #include "mag.h"
+#include "berth.h"
 
 static char   s_buf[32];
 static size_t s_n = 0;
@@ -18,6 +19,7 @@ static void printHelp() {
   Serial.println("  zero        把当前船头朝向设为出发点（0°）");
   Serial.println("  decl -5.2   设置磁偏角（真北修正）");
   Serial.println("  mag         立刻打印一行磁力计数据");
+  Serial.println("  dock        打印靠泊状态（距离、接近速度、告警）");
   Serial.println("  scan        扫描磁力计所在的 I2C 总线");
   Serial.println("------------------------------------------");
 }
@@ -50,6 +52,8 @@ static void runCmd(char* cmd) {
   if (low == "scan") { Serial.println(magScanI2C(msg)); return; }
 
   if (low == "mag" || low == "data") { cmdPrintMagLine(); return; }
+
+  if (low == "dock") { berthPrintReport(); return; }
 
   if (low == "zero") {
     magZeroHere(msg);
