@@ -8,8 +8,46 @@
 #include "lora_link.h"
 
 static bool     s_ready   = false;
-static uint32_t s_lastSeq = 0;
-static bool     s_hasSeq  = false;
+
+/* ---------------- 重传识别 ----------------
+   以前只记「上一包的序号」，多只信标交替发时会被误判。
+   现在按发送者分开记：来一只新的就占一格，满了就循环覆盖最老的一格。
+   ID 0（老格式帧）也按一只“发送者”处理。                              */
+
+#define MAX_TRACKED_SENDERS 8
+
+struct LastSeq {
+  uint8_t  id;
+  uint32_t seq;
+  bool     used;
+};
+
+static LastSeq s_lastSeqs[MAX_TRACKED_SENDERS];
+static uint8_t s_nextSlot = 0;
+
+// 返回 true 表示「这只发送者、这个序号」刚出现过（重传包）
+static bool seenBefore(uint8_t id, uint32_t seq) {
+  for (int i = 0; i < MAX_TRACKED_SENDERS; i++) {
+    if (s_lastSeqs[i].used && s_lastSeqs[i].id == id) {
+      bool dup = (s_lastSeqs[i].seq == seq);
+      s_lastSeqs[i].seq = seq;
+      return dup;
+    }
+  }
+  for (int i = 0; i < MAX_TRACKED_SENDERS; i++) {
+    if (!s_lastSeqs[i].used) {
+      s_lastSeqs[i].used = true;
+      s_lastSeqs[i].id   = id;
+      s_lastSeqs[i].seq  = seq;
+      return false;
+    }
+  }
+  s_lastSeqs[s_nextSlot].used = true;
+  s_lastSeqs[s_nextSlot].id   = id;
+  s_lastSeqs[s_nextSlot].seq  = seq;
+  s_nextSlot = (uint8_t)((s_nextSlot + 1) % MAX_TRACKED_SENDERS);
+  return false;
+}
 
 /* ---------------- 直接读写 SX127x 中断标志寄存器 ---------------- */
 
@@ -46,17 +84,38 @@ static bool txPacket(const char* s) {
   return ok;
 }
 
-/* ---------------- 解析 "M,<序号>,<载荷>" ---------------- */
+/* ---------------- 解析入帧 ----------------
+   新格式：M,<信标ID>,<序号>,P,<定位有效>,<纬度>,<经度>
+   老格式：M,<序号>,P,<定位有效>,<纬度>,<经度>
+
+   怎么区分：老格式的第 3 个字段直接就是 "P"，新格式第 3 个字段是序号。
+   所以先切出第 2、3 个字段，看第 3 个字段开头是不是 "P" 就知道了。
+   ——不能用“第 2 个字段是不是数字”来判断，因为两种格式那里都是数字。   */
 
 static bool parsePacketString(const String& s, TargetPacket* out) {
+  out->beaconId = BEACON_ID_NONE;
+
   if (!s.startsWith("M,")) return false;
+
   int p1 = s.indexOf(',');
+  if (p1 < 0) return false;
   int p2 = s.indexOf(',', p1 + 1);
-  if (p1 < 0 || p2 < 0) return false;
+  if (p2 < 0) return false;
 
-  out->seq = (uint32_t)strtoul(s.substring(p1 + 1, p2).c_str(), nullptr, 10);
+  String field2 = s.substring(p1 + 1, p2);   // 老格式=序号   新格式=信标ID
+  String rest   = s.substring(p2 + 1);       // 老格式="P,..." 新格式="<序号>,P,..."
 
-  String payload = s.substring(p2 + 1);
+  String payload;
+  if (rest.startsWith("P,")) {               // 老格式
+    out->seq = (uint32_t)strtoul(field2.c_str(), nullptr, 10);
+    payload  = rest;
+  } else {                                   // 新格式：再切一个字段才是序号
+    int p3 = rest.indexOf(',');
+    if (p3 < 0) return false;
+    out->beaconId = (uint8_t)strtoul(field2.c_str(), nullptr, 10);
+    out->seq      = (uint32_t)strtoul(rest.substring(0, p3).c_str(), nullptr, 10);
+    payload       = rest.substring(p3 + 1);
+  }
   payload.trim();
 
   int    fix = 1;
@@ -122,27 +181,37 @@ bool loraPoll(TargetPacket* out) {
   pkt.snr  = LoRa.packetSnr();
 
   if (!parsePacketString(s, &pkt)) {
-    Serial.printf("[LoRa] 收到无法解析的包：%s\n", s.c_str());
+    /* S 帧（别的船或岸基的广播）、A 帧（别处发的应答）本来就不是给本板收的，
+       静默丢掉；只有 M 帧是本板该收的，那种解析不了才值得报出来。 */
+    if (s.startsWith("M,")) Serial.printf("[LoRa] 收到无法解析的包：%s\n", s.c_str());
     return false;
   }
 
-  pkt.duplicate = (s_hasSeq && pkt.seq == s_lastSeq);
-  s_lastSeq = pkt.seq;
-  s_hasSeq  = true;
+  pkt.duplicate = seenBefore(pkt.beaconId, pkt.seq);
 
   *out = pkt;
   return true;
 }
 
+/* 应答帧：A,<船ID>,<序号>,C,<本方定位有效>,<纬度>,<经度>
+   带上船 ID 之后，多只信标/多条船同时工作时信标端才分得清。        */
 void loraSendAck(uint32_t seq, bool centerValid, double lat, double lon) {
   if (!s_ready) return;
   char tx[64];
   if (centerValid) {
-    snprintf(tx, sizeof(tx), "A,%lu,C,1,%.6f,%.6f", (unsigned long)seq, lat, lon);
+    snprintf(tx, sizeof(tx), "A,%u,%lu,C,1,%.6f,%.6f",
+             (unsigned)DEV_ID, (unsigned long)seq, lat, lon);
   } else {
-    snprintf(tx, sizeof(tx), "A,%lu,C,0,0,0", (unsigned long)seq);
+    snprintf(tx, sizeof(tx), "A,%u,%lu,C,0,0,0",
+             (unsigned)DEV_ID, (unsigned long)seq);
   }
   if (!txPacket(tx)) Serial.println("[LoRa] ACK 发送失败：800ms 内没有 TxDone");
+}
+
+/* 发一帧原文。定期广播（S 帧）用它，省得每个模块都去碰射频细节。 */
+bool loraSendText(const char* s) {
+  if (!s_ready || s == nullptr) return false;
+  return txPacket(s);
 }
 
 int loraChannelRssi() {

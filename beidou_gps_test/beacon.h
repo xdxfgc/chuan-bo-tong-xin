@@ -18,6 +18,8 @@ bool        beaconLinkUp();      // 链路是否在线
 bool        beaconHasTarget();   // 是否收到过信标坐标
 bool        beaconTargetValid(); // 信标定位是否有效
 uint32_t    beaconSeq();         // 最近一包的序号
+uint8_t     beaconId();          // 发送者的编号（信标 11/12/13…），0 = 老格式没带编号
+const char* beaconIdText();      // 编号文字，如 “11”；没带编号时返回 “--”
 double      beaconLat();
 double      beaconLon();
 int         beaconRssi();

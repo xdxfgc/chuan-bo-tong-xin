@@ -12,6 +12,7 @@
 #include "imu.h"
 #include "mag.h"
 #include "beacon.h"
+#include "lora_link.h"          // 用到 BEACON_ID_NONE
 #include "berth.h"
 #include "anchor.h"
 #include <U8g2lib.h>
@@ -58,8 +59,14 @@ static void renderBeacon() {
   const GpsStatus& g = gpsGet();
   char buf[32];
 
-  /* 第 1 行：标题 + 链路状态 */
-  drawCN(0, 11, "信标坐标");
+  /* 第 1 行：标题（带信标编号）+ 链路状态 */
+  if (beaconId() == BEACON_ID_NONE) {
+    drawCN(0, 11, "信标坐标");            // 老格式帧没带编号
+  } else {
+    char title[20];
+    snprintf(title, sizeof(title), "信标%u", (unsigned)beaconId());
+    drawCN(0, 11, title);
+  }
   if (beaconLinkUp()) {
     snprintf(buf, sizeof(buf), "%ddBm", beaconRssi());
     drawSM(128 - smW(buf), 11, buf);

@@ -44,7 +44,21 @@ bool linkSendWithAck(const char* frame, String& ackOut, int& attemptsUsed) {
       break;
     }
 
-    if (radioReceive(ackOut, ACK_TIMEOUT_MS)) {
+    /* 只有 "A," 开头的才是给本信标的应答。
+       船端现在每 2 秒还会广播 S 帧（给岸基的），信道里不止有应答，
+       所以收到的帧要挑一下，不能来什么都算成功。                     */
+    unsigned long t0      = millis();
+    bool          gotAck  = false;
+    while (millis() - t0 < ACK_TIMEOUT_MS) {
+      String rx;
+      uint32_t remain = ACK_TIMEOUT_MS - (uint32_t)(millis() - t0);
+      if (remain == 0) break;
+      if (!radioReceive(rx, remain)) break;          // 等超时了
+      if (rx.startsWith("A,")) { ackOut = rx; gotAck = true; break; }
+      DBG.printf("           忽略一帧不是应答的包 <- %s\n", rx.c_str());
+    }
+
+    if (gotAck) {
       DBG.printf("           收到应答 <- %s   RSSI=%d dBm  SNR=%.1f dB\n",
                  ackOut.c_str(), radioLastRssi(), radioLastSnr());
       printAckInfo(ackOut);

@@ -50,7 +50,14 @@ CRC      开启
 
 Arduino IDE 里开发板选 **ESP32C3 Dev Module**（SuperMini 也选它），串口监视器 **115200**。
 
-程序里已经处理了 USB CDC 的兼容问题，不用动 IDE 那个"USB CDC On Boot"的设置。
+⚠ **开发板一定要选 `ESP32C3 Dev Module`**，不能选 `ESP32 Dev Module`。
+后者指的是普通 ESP32（Xtensa 双核），而 C3 是 RISC-V 单核，机器码不一样，
+就算编过了 esptool 也会因为芯片型号对不上拒绝烧录。
+选错板子时典型报错是 `'USBCDC' does not name a type`——那是普通 ESP32 没有
+USB CDC 这一类导致的。
+
+程序里已经处理了 USB CDC 的兼容问题，不用动 IDE 那个"USB CDC On Boot"的设置；
+`debug.h` 里做了兜底，万一板子选错也只是打印通道不对，不会整个编不过。
 
 ## 代码结构（模块化）
 

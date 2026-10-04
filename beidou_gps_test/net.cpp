@@ -151,6 +151,7 @@ static const char INDEX_HTML[] = R"HTML(
   <h2>⑥ 信标搜救</h2>
   <div class="grid">
     <div class="card"><div class="k">信标链路</div><div class="v small" id="link">--</div></div>
+    <div class="card"><div class="k">信标编号</div><div class="v small" id="bid">--</div></div>
     <div class="card"><div class="k">信标距离</div><div class="v" id="dist">--</div></div>
     <div class="card"><div class="k">信标方位</div><div class="v" id="dir">--</div></div>
   </div>
@@ -204,6 +205,7 @@ async function tick(){
     document.getElementById('pitch').textContent = d.imuReady ? (d.pitch.toFixed(1) + '°') : '--';
     document.getElementById('roll').textContent  = d.imuReady ? (d.roll.toFixed(1) + '°') : '--';
     document.getElementById('link').textContent  = d.linkUp ? ('在线 ' + d.rssi + ' dBm') : '离线';
+    document.getElementById('bid').textContent   = d.hasTarget ? (d.beaconId > 0 ? ('信标 ' + d.beaconId) : '老格式') : '--';
     document.getElementById('dist').textContent  = d.haveDir ? (d.distM.toFixed(0) + ' m') : '--';
     document.getElementById('dir').textContent   = d.haveDir ? (d.useRel ? d.relDirText : d.dirText) : '--';
     document.getElementById('hdg').textContent   = (d.magOk && d.magCal) ? (d.heading.toFixed(0) + '°') : '--';
@@ -340,6 +342,7 @@ static String buildJson() {
   j += ",\"linkUp\":";      j += (beaconLinkUp() ? "true" : "false");
   j += ",\"hasTarget\":";   j += (beaconHasTarget() ? "true" : "false");
   j += ",\"targetValid\":"; j += (beaconTargetValid() ? "true" : "false");
+  j += ",\"beaconId\":";    j += beaconId();
   j += ",\"rssi\":";        j += beaconRssi();
   j += ",\"haveDir\":";     j += (beaconHaveDir() ? "true" : "false");
   snprintf(num, sizeof(num), "%.6f", beaconLat()); j += ",\"tLat\":"; j += num;

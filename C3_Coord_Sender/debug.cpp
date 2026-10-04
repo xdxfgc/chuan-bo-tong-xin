@@ -1,13 +1,14 @@
 /* =====================================================================
    debug.cpp   调试串口对象的定义（全工程只有这一处）
+   ---------------------------------------------------------------------
+   只有 debug.h 里判定为「本工程自己开」的时候才需要定义对象；
+   用框架 Serial 的情况这里就是空的。
    ===================================================================== */
 
 #include "debug.h"
 
-#if !ARDUINO_USB_CDC_ON_BOOT
-  #if defined(ARDUINO_USB_MODE) && ARDUINO_USB_MODE
-    HWCDC DBG;
-  #else
-    USBCDC DBG;
-  #endif
+#if CB_DBG_OWN == CB_DBG_OWN_HWCDC
+  HWCDC DBG;
+#elif CB_DBG_OWN == CB_DBG_OWN_USBCDC
+  USBCDC DBG;
 #endif

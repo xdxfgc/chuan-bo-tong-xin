@@ -150,6 +150,16 @@ static const int  RF_SF   = 10;
 static const long RF_BW   = 125E3;
 static const int  RF_SYNC = 0x12;
 
+/* ---------------- 本机标识与定期广播 ----------------
+   本机标识告诉信标和岸基「这一帧是谁发的」。分配约定：
+     本船 = 1，信标 = 11/12/13……，岸基 = 21/22……
+   每台设备必须不一样，多只信标、多条船同时工作时才分得清。
+
+   本船每 BOAT_BCAST_MS 广播一次自己的位置（S 帧），岸基靠它知道船在哪；
+   这是单向广播，不等应答，所以间隔不能太短，否则会挤掉收信标的时间。 */
+static const uint8_t  DEV_ID        = 1;
+static const uint32_t BOAT_BCAST_MS = 2000;
+
 /* ---------------- SYN6288 语音模块（UART2） ----------------
    模块 RXD <- GPIO16（必接）  TXD -> GPIO4（可选）  VCC -> 5V      */
 static const int      SYN_RX_PIN = 4;
