@@ -90,7 +90,7 @@ bool loraBegin() {
   LoRa.setPins(LORA_NSS_PIN, LORA_RST_PIN, LORA_DIO0_PIN);
   if (!LoRa.begin(RF_FREQ)) {
     Serial.println("[LoRa] 初始化失败：读不到 SX1278。检查 3V3/GND 和 "
-                   "SCK=14 MISO=12 MOSI=13 NSS=27 RST=32");
+                   "SCK=14 MISO=19 MOSI=23 NSS=13 RST=27");
     s_ready = false;
     return false;
   }

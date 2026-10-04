@@ -125,14 +125,17 @@ static const uint32_t BERTH_ALARM_GAP_MS = 3000; // 告警播报最短间隔
 static const uint8_t BERTH_DEBOUNCE_N  = 3;     // 告警去抖：连续多少帧满足才置位
 
 /* ---------------- LoRa SX1278（433MHz，SPI） ----------------
-   SCK->GPIO14  MISO->GPIO12  MOSI->GPIO13  NSS->GPIO27  RST->GPIO32
+   SCK->GPIO14  MISO->GPIO19  MOSI->GPIO23  NSS->GPIO13  RST->GPIO27
    DIO0 不接：程序用轮询，不需要中断脚。
-   两块板子的射频参数必须完全一致，否则收不到。                     */
+   两块板子的射频参数必须完全一致，否则收不到。
+   注意：这组引脚和接收端工程（WROOM32D_Coord_Receiver）一致，是按现有接线来的。
+   如果以后换成 ESP32-S3，GPIO19 是 USB 脚、GPIO23 不存在，那时要改到
+   12/13/27/32 一组上。                                              */
 static const int  LORA_SCK_PIN  = 14;
-static const int  LORA_MISO_PIN = 12;
-static const int  LORA_MOSI_PIN = 13;
-static const int  LORA_NSS_PIN  = 27;
-static const int  LORA_RST_PIN  = 32;
+static const int  LORA_MISO_PIN = 19;
+static const int  LORA_MOSI_PIN = 23;
+static const int  LORA_NSS_PIN  = 13;
+static const int  LORA_RST_PIN  = 27;
 static const int  LORA_DIO0_PIN = -1;
 static const long RF_FREQ = 433E6;
 static const int  RF_SF   = 10;

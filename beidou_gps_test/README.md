@@ -104,10 +104,10 @@ LoRa 模块 SX1278（Ra-01 / Ra-02，433MHz，SPI）：
 | VCC | 3.3V | 只能 3.3V |
 | GND | GND | 共地 |
 | SCK | GPIO14 | SPI 时钟 |
-| MISO | GPIO12 | SPI 数据入 |
-| MOSI | GPIO13 | SPI 数据出 |
-| NSS | GPIO27 | 片选 |
-| RST | GPIO32 | 复位 |
+| MISO | GPIO19 | SPI 数据入 |
+| MOSI | GPIO23 | SPI 数据出 |
+| NSS | GPIO13 | 片选 |
+| RST | GPIO27 | 复位 |
 | DIO0 | 不接 | 程序用轮询，不需要中断脚 |
 
 SYN6288 语音模块：
