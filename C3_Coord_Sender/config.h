@@ -49,6 +49,46 @@
 #define MAX_RETRY       3         // 等不到应答最多重发几次
 #define TX_TIMEOUT_MS   800       // 单次发送等 TxDone 的上限
 
+/* ---------------- 水感检测（落水触发） ----------------
+   硬件：两片不锈钢电极，间距 3~5 毫米，分别接下面两个脚。
+         自制电路，不需要任何电阻电容。平时两个脚是高阻，零功耗。
+
+   临时测试不用做电极：两根杜邦线插这两个脚，线头碰一起就是"入水"。
+   以后换上真电极，代码一行都不用改。
+
+   脚位只能从空闲脚里挑：GPIO0 / 1 / 3 / 4 / 5
+   （2、6、7、8、10 被 LoRa 占了，9 是启动脚，20/21 是北斗）        */
+/* 下面几个也包了 #ifndef：既能在本文件里改，也能编译时用 -D 覆盖
+   （一次编译出两种版本时方便）。                                   */
+#ifndef WATER_PIN_A
+#define WATER_PIN_A      3
+#endif
+#ifndef WATER_PIN_B
+#define WATER_PIN_B      4
+#endif
+#define WATER_SAMPLE_MS  500      // 采样间隔（越小越灵敏，越大越省电）
+#define WATER_CONFIRM_MS 2000     // 连续湿多久才算真落水（三重确认的"持续时间"）
+
+/* 定期状态行：每 WATER_STATUS_MS 毫秒打一行，不管有没有水都打。
+   串口监视器上一直能看到水感的当前状态，不用碰线头、不用敲命令。
+   不想看就设成 0（只在状态变化时打印）。                             */
+#ifndef WATER_STATUS_MS
+#define WATER_STATUS_MS  5000
+#endif
+
+/* 串口模拟命令：1 = 开放 wet on / wet off / wet（演示用，不用碰硬件）
+   注意：SRC_MODE = 3 也要读串口，两个不能同时开。                    */
+#ifndef WATER_SIM_CMD
+#define WATER_SIM_CMD    1
+#endif
+
+/* 只在判定入水后才上报：
+     0 = 不管有没有入水都照常上报（现在这个，联调方便）
+     1 = 平时静默，入水才开始上报（真正信标该有的行为，演示用）        */
+#ifndef SEND_ONLY_WET
+#define SEND_ONLY_WET    0
+#endif
+
 /* ---------------- 坐标来源（改这里切换） ----------------
    0 = 固定坐标（联调最省事，但发的是假坐标）
    1 = 绕固定点缓慢转圈（演示用，能看方向和距离一直在变）
