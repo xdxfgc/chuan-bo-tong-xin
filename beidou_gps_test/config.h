@@ -236,4 +236,13 @@ static const uint32_t ANCHOR_LASER_MS    = 10000;
 
 static const uint32_t ANCHOR_REPEAT_MS   = 20000;   // 告警持续时的重播间隔
 
+/* ---------------- 数据记录（黑匣子） ----------------
+   每秒把一帧状态存进 RAM 环形缓冲，网页上可以下载 CSV、按时间轴回放。
+   只占内存、不写 flash——flash 每秒写一次会磨损，而且本项目不需要长期脱机记录。
+   容量 900 条 × 1 秒 ≈ 15 分钟，够一次靠泊或一次试验用。              */
+#define LOGBOOK_ENABLE   1
+#define LOGBOOK_CAPACITY 900        // 记录条数
+static const uint32_t LOG_INTERVAL_MS = 1000;   // 采样间隔
+#define LOG_SERIAL_CSV   0          // 1 = 每秒也往串口打一行 CSV（默认关，免得刷屏）
+
 #endif

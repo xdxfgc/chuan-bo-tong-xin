@@ -11,6 +11,7 @@
 #include "berth.h"
 #include "buzzer.h"
 #include "anchor.h"
+#include "logbook.h"
 
 static WebServer server(WEB_PORT);
 static unsigned long lastWifiTry = 0;
@@ -24,273 +25,549 @@ static IPAddress STATIC_DNS    (STATIC_GW_A, STATIC_GW_B, STATIC_GW_C, STATIC_GW
 
 /* ---------------- 网页 ---------------- */
 
-static const char INDEX_HTML[] = R"HTML(
-<!DOCTYPE html>
+/* 下面这整段 HTML/JS 是随程序一起烧进 flash 的，页面越大越占程序空间。
+   所以里面没有缩进也没有注释 —— 不是写坏了，是故意压掉省 flash：
+   默认分区只给程序留 1.2MB，页面每多 1KB，程序空间就少 1KB。
+   改页面时保持这个紧凑风格；页面各功能的说明都写在 README.md 里。 */
+static const char INDEX_HTML[] = R"HTML(<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>船舶终端</title>
 <style>
-  :root{--bg:#0f1720;--card:#18222e;--line:#26333f;--txt:#e6edf3;--dim:#8b98a5;--accent:#38bdf8}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);
-       font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
-  .wrap{max-width:860px;margin:0 auto;padding:20px}
-  h1{font-size:22px;margin:4px 0 2px}
-  .sub{color:var(--dim);font-size:13px;margin:0 0 16px}
-  .banner{padding:14px 16px;border-radius:12px;font-size:17px;font-weight:600;
-          margin-bottom:16px;background:#22303c;border:1px solid var(--line)}
-  .banner.ok{background:#0f2e1c;border-color:#1f6f3f;color:#7ee2a8}
-  .banner.bad{background:#331717;border-color:#7f2d2d;color:#ff9b9b}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
-  .k{color:var(--dim);font-size:12px;margin-bottom:6px}
-  .v{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums}
-  .v.small{font-size:15px}
-  h2{font-size:16px;margin:26px 0 10px;color:var(--txt);font-weight:700;
-     padding-bottom:6px;border-bottom:1px solid var(--line)}
-  .hex,.raw{background:#0b1219;border:1px solid var(--line);border-radius:10px;
-            padding:12px;font-family:Consolas,Menlo,monospace;font-size:12.5px;
-            word-break:break-all;color:#9fe0b0}
-  .raw{color:#9ec7e8}
-  a{color:var(--accent)}
-  .bar{margin:-6px 0 16px}
-  .btn{padding:10px 16px;border-radius:10px;border:1px solid var(--line);
-       background:#22303c;color:var(--txt);font-size:15px;cursor:pointer}
-  .btn.off{background:#3a2020;border-color:#7f2d2d;color:#ff9b9b}
-  canvas{width:100%;height:120px;background:#0b1219;border:1px solid var(--line);border-radius:10px}
-  .tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
-  .tab{padding:8px 16px;border-radius:999px;border:1px solid var(--line);
-       background:#1a232e;color:var(--dim);font-size:14px;cursor:pointer}
-  .tab.on{background:#173148;border-color:var(--accent);color:var(--txt);font-weight:600}
-  .pane{display:none}
+:root{--bg:#0f1720;--card:#18222e;--line:#26333f;--txt:#e6edf3;--dim:#8b98a5;--accent:#38bdf8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);
+font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+.wrap{max-width:860px;margin:0 auto;padding:20px}
+h1{font-size:22px;margin:4px 0 2px}
+.sub{color:var(--dim);font-size:13px;margin:0 0 16px}
+.banner{padding:14px 16px;border-radius:12px;font-size:17px;font-weight:600;
+margin-bottom:16px;background:#22303c;border:1px solid var(--line)}
+.banner.ok{background:#0f2e1c;border-color:#1f6f3f;color:#7ee2a8}
+.banner.bad{background:#331717;border-color:#7f2d2d;color:#ff9b9b}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.k{color:var(--dim);font-size:12px;margin-bottom:6px}
+.v{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums}
+.v.small{font-size:15px}
+h2{font-size:16px;margin:26px 0 10px;color:var(--txt);font-weight:700;
+padding-bottom:6px;border-bottom:1px solid var(--line)}
+.hex,.raw{background:#0b1219;border:1px solid var(--line);border-radius:10px;
+padding:12px;font-family:Consolas,Menlo,monospace;font-size:12.5px;
+word-break:break-all;color:#9fe0b0;white-space:pre-wrap}
+.raw{color:#9ec7e8}
+a{color:var(--accent)}
+.bar{margin:-6px 0 16px}
+.btn{padding:10px 16px;border-radius:10px;border:1px solid var(--line);
+background:#22303c;color:var(--txt);font-size:15px;cursor:pointer}
+.btn.off{background:#3a2020;border-color:#7f2d2d;color:#ff9b9b}
+canvas{width:100%;height:120px;background:#0b1219;border:1px solid var(--line);border-radius:10px}
+canvas.map{width:100%;height:auto;max-width:540px;margin:0 auto;display:block}
+.mapwrap{background:#0b1219;border:1px solid var(--line);border-radius:12px;padding:10px}
+.mapbar{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:0 0 10px}
+.legend{display:flex;flex-wrap:wrap;gap:16px;justify-content:center;
+margin-top:10px;color:var(--dim);font-size:12.5px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;
+margin-right:5px;vertical-align:middle}
+.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.tab{padding:8px 16px;border-radius:999px;border:1px solid var(--line);
+background:#1a232e;color:var(--dim);font-size:14px;cursor:pointer}
+.tab.on{background:#173148;border-color:var(--accent);color:var(--txt);font-weight:600}
+.pane{display:none}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>船舶终端</h1>
-  <p class="sub">北斗定位 · 激光测距 · LoRa 信标接收 · 语音播报</p>
-  <div class="banner" id="banner">正在等待数据…</div>
-  <div class="bar">
-    <button id="btnBuzz" class="btn" onclick="toggleBuzz()">蜂鸣器：--</button>
-    <button id="btnMoor" class="btn" onclick="toggleMoor()">设锚泊基准</button>
-  </div>
-  <div class="tabs">
-    <button class="tab" data-t="all" onclick="showTab('all')">全部</button>
-    <button class="tab on" data-t="1" onclick="showTab('1')">① 定位</button>
-    <button class="tab" data-t="2" onclick="showTab('2')">② 测距</button>
-    <button class="tab" data-t="3" onclick="showTab('3')">③ 姿态</button>
-    <button class="tab" data-t="4" onclick="showTab('4')">④ 靠泊</button>
-    <button class="tab" data-t="5" onclick="showTab('5')">⑤ 锚泊</button>
-    <button class="tab" data-t="6" onclick="showTab('6')">⑥ 信标</button>
-    <button class="tab" data-t="7" onclick="showTab('7')">⑦ 原始数据</button>
-  </div>
-
-  <section class="pane" data-p="1" style="display:block">
-  <h2>① 北斗定位</h2>
-  <div class="grid">
-    <div class="card"><div class="k">定位状态</div><div class="v small" id="ftype">--</div></div>
-    <div class="card"><div class="k">纬度</div><div class="v" id="lat">--</div></div>
-    <div class="card"><div class="k">经度</div><div class="v" id="lon">--</div></div>
-    <div class="card"><div class="k">海拔</div><div class="v" id="alt">--</div></div>
-    <div class="card"><div class="k">卫星（参与 / 可见）</div><div class="v" id="sat">--</div></div>
-    <div class="card"><div class="k">HDOP（越小越好）</div><div class="v" id="hdop">--</div></div>
-    <div class="card"><div class="k">对地速度</div><div class="v" id="spd">--</div></div>
-    <div class="card"><div class="k">航向</div><div class="v" id="crs">--</div></div>
-    <div class="card"><div class="k">北京时间</div><div class="v small" id="bj">--</div></div>
-    <div class="card"><div class="k">日期</div><div class="v small" id="date">--</div></div>
-    <div class="card"><div class="k">天线状态</div><div class="v small" id="ant">--</div></div>
-  </div>
-
-  </section>
-
-  <section class="pane" data-p="2">
-  <h2>② 激光测距</h2>
-  <div class="grid">
-    <div class="card"><div class="k">距岸距离</div><div class="v" id="tof">--</div></div>
-  </div>
-
-  </section>
-
-  <section class="pane" data-p="3">
-  <h2>③ 姿态与航向</h2>
-  <div class="grid">
-    <div class="card"><div class="k">俯仰角</div><div class="v" id="pitch">--</div></div>
-    <div class="card"><div class="k">横滚角</div><div class="v" id="roll">--</div></div>
-    <div class="card"><div class="k">航向角（磁北）</div><div class="v" id="hdg">--</div></div>
-    <div class="card"><div class="k">磁力计状态</div><div class="v small" id="mag">--</div></div>
-  </div>
-
-  </section>
-
-  <section class="pane" data-p="4">
-  <h2>④ 靠泊辅助</h2>
-  <div class="grid">
-    <div class="card"><div class="k">距岸距离</div><div class="v" id="bdist">--</div></div>
-    <div class="card"><div class="k">接近速度</div><div class="v" id="bspd">--</div></div>
-    <div class="card"><div class="k">靠泊状态</div><div class="v small" id="bstate">--</div></div>
-  </div>
-
-  </section>
-
-  <section class="pane" data-p="5">
-  <h2>⑤ 锚泊监测（走锚）</h2>
-  <div class="grid">
-    <div class="card"><div class="k">离基准位移</div><div class="v" id="adrift">--</div></div>
-    <div class="card"><div class="k">漂移方向</div><div class="v" id="adir">--</div></div>
-    <div class="card"><div class="k">漂移速率</div><div class="v" id="aspeed">--</div></div>
-    <div class="card"><div class="k">锚泊状态</div><div class="v small" id="astate">--</div></div>
-  </div>
-  <p class="sub">位移趋势（红线为 2 米告警阈值）</p>
-  <canvas id="curve" width="800" height="120"></canvas>
-
-  </section>
-
-  <section class="pane" data-p="6">
-  <h2>⑥ 信标搜救</h2>
-  <div class="grid">
-    <div class="card"><div class="k">信标链路</div><div class="v small" id="link">--</div></div>
-    <div class="card"><div class="k">信标编号</div><div class="v small" id="bid">--</div></div>
-    <div class="card"><div class="k">信标距离</div><div class="v" id="dist">--</div></div>
-    <div class="card"><div class="k">信标方位</div><div class="v" id="dir">--</div></div>
-  </div>
-
-  </section>
-
-  <section class="pane" data-p="7">
-  <h2>⑦ 原始数据</h2>
-  <p class="sub">位姿帧（文档表27 · 0x01）</p>
-  <div class="hex" id="frame">--</div>
-  <p class="sub">原始语句（GGA）</p>
-  <div class="raw" id="raw">--</div>
-  <p class="sub">地图</p>
-  <div class="raw" id="maplink">待定位</div>
-  <p class="sub" id="foot">运行时间 -- 秒</p>
-  </section>
+<h1>船舶终端</h1>
+<p class="sub">北斗定位 · 激光测距 · LoRa 信标接收 · 语音播报</p>
+<div class="banner" id="banner">正在等待数据…</div>
+<div class="bar">
+<button id="btnBuzz" class="btn" onclick="toggleBuzz()">蜂鸣器：--</button>
+<button id="btnMoor" class="btn" onclick="toggleMoor()">设锚泊基准</button>
+</div>
+<div class="tabs">
+<button class="tab" data-t="all" onclick="showTab('all')">全部</button>
+<button class="tab on" data-t="1" onclick="showTab('1')">① 定位</button>
+<button class="tab" data-t="2" onclick="showTab('2')">② 测距</button>
+<button class="tab" data-t="3" onclick="showTab('3')">③ 姿态</button>
+<button class="tab" data-t="4" onclick="showTab('4')">④ 靠泊</button>
+<button class="tab" data-t="5" onclick="showTab('5')">⑤ 锚泊</button>
+<button class="tab" data-t="6" onclick="showTab('6')">⑥ 信标</button>
+<button class="tab" data-t="7" onclick="showTab('7')">⑦ 原始数据</button>
+<button class="tab" data-t="8" onclick="showTab('8')">⑧ 数据记录</button>
+</div>
+<section class="pane" data-p="1" style="display:block">
+<h2>① 北斗定位</h2>
+<div class="grid">
+<div class="card"><div class="k">定位状态</div><div class="v small" id="ftype">--</div></div>
+<div class="card"><div class="k">纬度</div><div class="v" id="lat">--</div></div>
+<div class="card"><div class="k">经度</div><div class="v" id="lon">--</div></div>
+<div class="card"><div class="k">海拔</div><div class="v" id="alt">--</div></div>
+<div class="card"><div class="k">卫星（参与 / 可见）</div><div class="v" id="sat">--</div></div>
+<div class="card"><div class="k">HDOP（越小越好）</div><div class="v" id="hdop">--</div></div>
+<div class="card"><div class="k">对地速度</div><div class="v" id="spd">--</div></div>
+<div class="card"><div class="k">航向</div><div class="v" id="crs">--</div></div>
+<div class="card"><div class="k">北京时间</div><div class="v small" id="bj">--</div></div>
+<div class="card"><div class="k">日期</div><div class="v small" id="date">--</div></div>
+<div class="card"><div class="k">天线状态</div><div class="v small" id="ant">--</div></div>
+</div>
+</section>
+<section class="pane" data-p="2">
+<h2>② 激光测距</h2>
+<div class="grid">
+<div class="card"><div class="k">距岸距离</div><div class="v" id="tof">--</div></div>
+</div>
+</section>
+<section class="pane" data-p="3">
+<h2>③ 姿态与航向</h2>
+<div class="grid">
+<div class="card"><div class="k">俯仰角</div><div class="v" id="pitch">--</div></div>
+<div class="card"><div class="k">横滚角</div><div class="v" id="roll">--</div></div>
+<div class="card"><div class="k">航向角（磁北）</div><div class="v" id="hdg">--</div></div>
+<div class="card"><div class="k">磁力计状态</div><div class="v small" id="mag">--</div></div>
+</div>
+</section>
+<section class="pane" data-p="4">
+<h2>④ 靠泊辅助</h2>
+<div class="grid">
+<div class="card"><div class="k">距岸距离</div><div class="v" id="bdist">--</div></div>
+<div class="card"><div class="k">接近速度</div><div class="v" id="bspd">--</div></div>
+<div class="card"><div class="k">靠泊状态</div><div class="v small" id="bstate">--</div></div>
+</div>
+</section>
+<section class="pane" data-p="5">
+<h2>⑤ 锚泊监测（走锚）</h2>
+<div class="grid">
+<div class="card"><div class="k">离基准位移</div><div class="v" id="adrift">--</div></div>
+<div class="card"><div class="k">漂移方向</div><div class="v" id="adir">--</div></div>
+<div class="card"><div class="k">漂移速率</div><div class="v" id="aspeed">--</div></div>
+<div class="card"><div class="k">锚泊状态</div><div class="v small" id="astate">--</div></div>
+</div>
+<p class="sub">位移趋势（红线为 2 米告警阈值）</p>
+<canvas id="curve" width="800" height="120"></canvas>
+</section>
+<section class="pane" data-p="6">
+<h2>⑥ 信标搜救</h2>
+<div class="grid">
+<div class="card"><div class="k">信标链路</div><div class="v small" id="link">--</div></div>
+<div class="card"><div class="k">信标编号</div><div class="v small" id="bid">--</div></div>
+<div class="card"><div class="k">信标距离</div><div class="v" id="dist">--</div></div>
+<div class="card"><div class="k">信标方位</div><div class="v" id="dir">--</div></div>
+</div>
+<h2>信标—本船相对态势</h2>
+<div class="mapwrap">
+<div class="mapbar">
+<button class="btn" id="btnMapMode" onclick="toggleMapMode()">视图：船头朝上</button>
+<button class="btn" onclick="clearMapTrail()">清除航迹</button>
+</div>
+<canvas id="map" class="map" width="720" height="720"></canvas>
+<div class="legend">
+<span><i style="background:#38bdf8"></i>本船</span>
+<span><i style="background:#ef4444"></i>信标（落水点）</span>
+<span><i style="background:#f59e0b"></i>本船航迹</span>
+<span id="mapScale">量程 --</span>
+</div>
+<p class="sub" id="mapNote">等待数据…</p>
+</div>
+</section>
+<section class="pane" data-p="7">
+<h2>⑦ 原始数据</h2>
+<p class="sub">位姿帧（文档表27 · 0x01）</p>
+<div class="hex" id="frame">--</div>
+<p class="sub">原始语句（GGA）</p>
+<div class="raw" id="raw">--</div>
+<p class="sub">地图</p>
+<div class="raw" id="maplink">待定位</div>
+<p class="sub" id="foot">运行时间 -- 秒</p>
+</section>
+<section class="pane" data-p="8">
+<h2>⑧ 数据记录</h2>
+<div class="grid">
+<div class="card"><div class="k">记录状态</div><div class="v small" id="logstate">--</div></div>
+<div class="card"><div class="k">已记录 / 容量</div><div class="v" id="logcount">--</div></div>
+<div class="card"><div class="k">覆盖时长</div><div class="v" id="logspan">--</div></div>
+</div>
+<div class="bar">
+<button id="btnLog" class="btn" onclick="toggleLog()">暂停记录</button>
+<a id="btnCsv" class="btn" href="/log" download="ship_log.csv">下载 CSV</a>
+<button class="btn" onclick="clearLog()">清空</button>
+</div>
+<p class="sub">回放：先点「加载回放数据」，然后拖滑块或用播放按钮逐条浏览</p>
+<div class="bar">
+<button class="btn" onclick="loadPlayback()">加载回放数据</button>
+<button class="btn" onclick="togglePlay()">播放 / 暂停</button>
+</div>
+<input type="range" id="pbRange" min="0" max="0" value="0"
+style="width:100%;margin:6px 0 12px" oninput="showRec(this.value)">
+<div class="raw" id="pbInfo">未加载</div>
+</section>
 </div>
 <script>
 async function tick(){
-  try{
-    const d = await (await fetch('/data',{cache:'no-store'})).json();
-    const b = document.getElementById('banner');
-    if(d.linkUp && d.targetValid && d.haveDir){
-      b.className='banner bad';
-      b.textContent='收到信标 · ' + d.dirText + '方向 约 ' + d.distM.toFixed(0) + ' 米';
-    } else if(d.berthAlarm){
-      b.className='banner bad';
-      b.textContent='靠泊告警 · ' + d.berthAlarmText;
-    } else if(d.anchorAlarm){
-      b.className='banner bad';
-      b.textContent='锚泊告警 · ' + d.anchorAlarmText;
-    } else if(d.valid){
-      b.className='banner ok';
-      b.textContent='定位成功 · ' + (d.fixType===3?'三维定位':'二维定位');
-    } else {
-      b.className='banner bad';
-      b.textContent = d.alarm;
-    }
-    document.getElementById('ftype').textContent = d.fixType===3?'三维定位':(d.fixType===2?'二维定位':'未定位');
-    document.getElementById('lat').textContent   = d.valid ? d.lat.toFixed(6)+'° N' : '--';
-    document.getElementById('lon').textContent   = d.valid ? d.lon.toFixed(6)+'° E' : '--';
-    document.getElementById('alt').textContent   = d.valid ? d.alt.toFixed(1)+' m' : '--';
-    document.getElementById('sat').textContent   = d.satsUsed + ' / ' + d.satsView;
-    document.getElementById('hdop').textContent  = d.hdop.toFixed(1);
-    document.getElementById('spd').textContent   = d.speedKmh.toFixed(2)+' km/h';
-    document.getElementById('crs').textContent   = d.course.toFixed(1)+'°';
-    document.getElementById('bj').textContent    = d.bj;
-    document.getElementById('date').textContent  = d.date;
-    document.getElementById('ant').textContent   = d.antenna;
-    document.getElementById('tof').textContent   = d.tofText;
-    document.getElementById('pitch').textContent = d.imuReady ? (d.pitch.toFixed(1) + '°') : '--';
-    document.getElementById('roll').textContent  = d.imuReady ? (d.roll.toFixed(1) + '°') : '--';
-    document.getElementById('link').textContent  = d.linkUp ? ('在线 ' + d.rssi + ' dBm') : '离线';
-    document.getElementById('bid').textContent   = d.hasTarget ? (d.beaconId > 0 ? ('信标 ' + d.beaconId) : '老格式') : '--';
-    document.getElementById('dist').textContent  = d.haveDir ? (d.distM.toFixed(0) + ' m') : '--';
-    document.getElementById('dir').textContent   = d.haveDir ? (d.useRel ? d.relDirText : d.dirText) : '--';
-    document.getElementById('hdg').textContent   = (d.magOk && d.magCal) ? (d.heading.toFixed(0) + '°') : '--';
-    document.getElementById('mag').textContent   = d.magOk ? (d.magCal ? '已标定' : '未标定') : '未连接';
-    document.getElementById('bdist').textContent = d.berthValid ? d.berthDistText : '--';
-    document.getElementById('bspd').textContent  = d.berthActive ? (d.berthSpeed.toFixed(2) + ' m/s') : '--';
-    document.getElementById('bstate').textContent = d.berthDocked ? '已靠妥'
-                                                  : (d.berthAlarm ? d.berthAlarmText
-                                                  : (d.berthActive ? '监测中' : '待机'));
-    const bb = document.getElementById('btnBuzz');
-    bb.dataset.on = d.buzzOn ? '1' : '0';
-    bb.textContent = '蜂鸣器：' + d.buzzState + '（点击切换）';
-    bb.className = 'btn' + (d.buzzOn ? '' : ' off');
-    const bm = document.getElementById('btnMoor');
-    bm.dataset.on = d.anchorOn ? '1' : '0';
-    bm.textContent = d.anchorOn ? '清除锚泊基准' : '设锚泊基准';
-    bm.className = 'btn' + (d.anchorOn ? ' off' : '');
-    document.getElementById('adrift').textContent = d.anchorOn ? (d.anchorDrift.toFixed(2) + ' m') : '--';
-    document.getElementById('adir').textContent   = d.anchorOn ? (d.anchorDir.toFixed(0) + '°') : '--';
-    document.getElementById('aspeed').textContent = d.anchorOn ? (d.anchorSpeed.toFixed(3) + ' m/s') : '--';
-    document.getElementById('astate').textContent = d.anchorState;
-    drawCurve(d.anchorHist);
-    document.getElementById('frame').textContent = d.frame;
-    document.getElementById('raw').textContent   = d.raw;
-    const ml = document.getElementById('maplink');
-    if(d.valid){
-      ml.innerHTML = '<a target="_blank" href="https://www.openstreetmap.org/?mlat='+d.lat+
-                     '&mlon='+d.lon+'#map=17/'+d.lat+'/'+d.lon+'">在 OpenStreetMap 上查看当前位置</a>';
-    } else { ml.textContent = '待定位'; }
-    document.getElementById('foot').textContent = '运行时间 ' + d.runSec + ' 秒';
-  }catch(e){
-    const b = document.getElementById('banner');
-    b.className='banner bad';
-    b.textContent='与 ESP32 的连接中断，请确认手机或电脑连的是同一个 WiFi';
-  }
+try{
+const d = await (await fetch('/data',{cache:'no-store'})).json();
+lastData = d;
+drawMap(d);
+const b = document.getElementById('banner');
+if(d.linkUp && d.targetValid && d.haveDir){
+b.className='banner bad';
+b.textContent='收到信标 · ' + d.dirText + '方向 约 ' + d.distM.toFixed(0) + ' 米';
+} else if(d.berthAlarm){
+b.className='banner bad';
+b.textContent='靠泊告警 · ' + d.berthAlarmText;
+} else if(d.anchorAlarm){
+b.className='banner bad';
+b.textContent='锚泊告警 · ' + d.anchorAlarmText;
+} else if(d.valid){
+b.className='banner ok';
+b.textContent='定位成功 · ' + (d.fixType===3?'三维定位':'二维定位');
+} else {
+b.className='banner bad';
+b.textContent = d.alarm;
+}
+document.getElementById('ftype').textContent = d.fixType===3?'三维定位':(d.fixType===2?'二维定位':'未定位');
+document.getElementById('lat').textContent   = d.valid ? d.lat.toFixed(6)+'° N' : '--';
+document.getElementById('lon').textContent   = d.valid ? d.lon.toFixed(6)+'° E' : '--';
+document.getElementById('alt').textContent   = d.valid ? d.alt.toFixed(1)+' m' : '--';
+document.getElementById('sat').textContent   = d.satsUsed + ' / ' + d.satsView;
+document.getElementById('hdop').textContent  = d.hdop.toFixed(1);
+document.getElementById('spd').textContent   = d.speedKmh.toFixed(2)+' km/h';
+document.getElementById('crs').textContent   = d.course.toFixed(1)+'°';
+document.getElementById('bj').textContent    = d.bj;
+document.getElementById('date').textContent  = d.date;
+document.getElementById('ant').textContent   = d.antenna;
+document.getElementById('tof').textContent   = d.tofText;
+document.getElementById('pitch').textContent = d.imuReady ? (d.pitch.toFixed(1) + '°') : '--';
+document.getElementById('roll').textContent  = d.imuReady ? (d.roll.toFixed(1) + '°') : '--';
+document.getElementById('link').textContent  = d.linkUp ? ('在线 ' + d.rssi + ' dBm') : '离线';
+document.getElementById('bid').textContent   = d.hasTarget ? (d.beaconId > 0 ? ('信标 ' + d.beaconId) : '老格式') : '--';
+document.getElementById('dist').textContent  = d.haveDir ? (d.distM.toFixed(0) + ' m') : '--';
+document.getElementById('dir').textContent   = d.haveDir ? (d.useRel ? d.relDirText : d.dirText) : '--';
+document.getElementById('hdg').textContent   = (d.magOk && d.magCal) ? (d.heading.toFixed(0) + '°') : '--';
+document.getElementById('mag').textContent   = d.magOk ? (d.magCal ? '已标定' : '未标定') : '未连接';
+document.getElementById('bdist').textContent = d.berthValid ? d.berthDistText : '--';
+document.getElementById('bspd').textContent  = d.berthActive ? (d.berthSpeed.toFixed(2) + ' m/s') : '--';
+document.getElementById('bstate').textContent = d.berthDocked ? '已靠妥'
+: (d.berthAlarm ? d.berthAlarmText
+: (d.berthActive ? '监测中' : '待机'));
+const bb = document.getElementById('btnBuzz');
+bb.dataset.on = d.buzzOn ? '1' : '0';
+bb.textContent = '蜂鸣器：' + d.buzzState + '（点击切换）';
+bb.className = 'btn' + (d.buzzOn ? '' : ' off');
+const bm = document.getElementById('btnMoor');
+bm.dataset.on = d.anchorOn ? '1' : '0';
+bm.textContent = d.anchorOn ? '清除锚泊基准' : '设锚泊基准';
+bm.className = 'btn' + (d.anchorOn ? ' off' : '');
+document.getElementById('adrift').textContent = d.anchorOn ? (d.anchorDrift.toFixed(2) + ' m') : '--';
+document.getElementById('adir').textContent   = d.anchorOn ? (d.anchorDir.toFixed(0) + '°') : '--';
+document.getElementById('aspeed').textContent = d.anchorOn ? (d.anchorSpeed.toFixed(3) + ' m/s') : '--';
+document.getElementById('astate').textContent = d.anchorState;
+drawCurve(d.anchorHist);
+document.getElementById('logstate').textContent = d.logOn ? '记录中' : '已暂停';
+document.getElementById('logcount').textContent = d.logCount + ' / ' + d.logCap;
+document.getElementById('logspan').textContent  = d.logSpan + ' 秒';
+const bl = document.getElementById('btnLog');
+bl.dataset.on = d.logOn ? '1' : '0';
+bl.textContent = d.logOn ? '暂停记录' : '开始记录';
+document.getElementById('frame').textContent = d.frame;
+document.getElementById('raw').textContent   = d.raw;
+const ml = document.getElementById('maplink');
+if(d.valid){
+ml.innerHTML = '<a target="_blank" href="https://www.openstreetmap.org/?mlat='+d.lat+
+'&mlon='+d.lon+'#map=17/'+d.lat+'/'+d.lon+'">在 OpenStreetMap 上查看当前位置</a>';
+} else { ml.textContent = '待定位'; }
+document.getElementById('foot').textContent = '运行时间 ' + d.runSec + ' 秒';
+}catch(e){
+const b = document.getElementById('banner');
+b.className='banner bad';
+b.textContent='与 ESP32 的连接中断，请确认手机或电脑连的是同一个 WiFi';
+}
 }
 function drawCurve(hist){
-  const c = document.getElementById('curve');
-  if(!c) return;
-  const g = c.getContext('2d');
-  const W = c.width, H = c.height;
-  g.clearRect(0, 0, W, H);
-  if(!hist) return;
-  const v = hist.split(',').map(Number).filter(function(x){ return !isNaN(x); });
-  if(v.length < 2) return;
-  let maxV = 2.5;
-  for(let i = 0; i < v.length; i++) if(v[i] > maxV) maxV = v[i];
-  maxV *= 1.15;
-  g.strokeStyle = '#38bdf8'; g.lineWidth = 2; g.beginPath();
-  for(let i = 0; i < v.length; i++){
-    const x = i * (W - 1) / (v.length - 1);
-    const y = H - (v[i] / maxV) * (H - 8) - 4;
-    if(i) g.lineTo(x, y); else g.moveTo(x, y);
-  }
-  g.stroke();
-  const yt = H - (2.0 / maxV) * (H - 8) - 4;
-  g.strokeStyle = '#ef4444'; g.setLineDash([6, 6]); g.beginPath();
-  g.moveTo(0, yt); g.lineTo(W, yt); g.stroke(); g.setLineDash([]);
+const c = document.getElementById('curve');
+if(!c) return;
+const g = c.getContext('2d');
+const W = c.width, H = c.height;
+g.clearRect(0, 0, W, H);
+if(!hist) return;
+const v = hist.split(',').map(Number).filter(function(x){ return !isNaN(x); });
+if(v.length < 2) return;
+let maxV = 2.5;
+for(let i = 0; i < v.length; i++) if(v[i] > maxV) maxV = v[i];
+maxV *= 1.15;
+g.strokeStyle = '#38bdf8'; g.lineWidth = 2; g.beginPath();
+for(let i = 0; i < v.length; i++){
+const x = i * (W - 1) / (v.length - 1);
+const y = H - (v[i] / maxV) * (H - 8) - 4;
+if(i) g.lineTo(x, y); else g.moveTo(x, y);
 }
-
+g.stroke();
+const yt = H - (2.0 / maxV) * (H - 8) - 4;
+g.strokeStyle = '#ef4444'; g.setLineDash([6, 6]); g.beginPath();
+g.moveTo(0, yt); g.lineTo(W, yt); g.stroke(); g.setLineDash([]);
+}
 async function toggleMoor(){
-  const on = document.getElementById('btnMoor').dataset.on === '1';
-  try { await fetch('/moor?set=' + (on ? '0' : '1'), {cache:'no-store'}); } catch(e) {}
-  tick();
+const on = document.getElementById('btnMoor').dataset.on === '1';
+try { await fetch('/moor?set=' + (on ? '0' : '1'), {cache:'no-store'}); } catch(e) {}
+tick();
 }
-
 async function toggleBuzz(){
-  const cur = document.getElementById('btnBuzz').dataset.on === '1';
-  try { await fetch('/buzz?on=' + (cur ? '0' : '1'), {cache:'no-store'}); } catch(e) {}
-  tick();
+const cur = document.getElementById('btnBuzz').dataset.on === '1';
+try { await fetch('/buzz?on=' + (cur ? '0' : '1'), {cache:'no-store'}); } catch(e) {}
+tick();
+}
+let pbData = null, pbTimer = null, pbIdx = 0;
+async function loadPlayback(){
+try{
+const t = await (await fetch('/log',{cache:'no-store'})).text();
+const all = t.split('\n');
+pbData = all.slice(1).filter(function(l){ return l.length > 3; });
+if(!pbData.length){
+document.getElementById('pbInfo').textContent = '还没有记录。';
+document.getElementById('pbRange').max = 0;
+return;
+}
+const r = document.getElementById('pbRange');
+r.max = pbData.length - 1;
+r.value = pbData.length - 1;
+showRec(pbData.length - 1);
+}catch(e){
+document.getElementById('pbInfo').textContent = '加载失败。';
+}
+}
+function showRec(i){
+if(!pbData || !pbData.length) return;
+pbIdx = Math.min(Math.max(0, parseInt(i, 10) || 0), pbData.length - 1);
+const p = pbData[pbIdx].split(',');
+document.getElementById('pbInfo').textContent =
+'第 ' + (pbIdx + 1) + ' / ' + pbData.length + ' 条\n' +
+'时间     ' + (p[1] || '--') + '\n' +
+'位置     ' + p[2] + ', ' + p[3] + '     卫星 ' + p[4] + '     HDOP ' + p[5] + '\n' +
+'激光     ' + (p[7] || '--') + ' mm     俯仰 ' + p[8] + '     横滚 ' + p[9] + '\n' +
+'航向     ' + (p[10] || '--') + '     锚泊位移 ' + p[11] + ' m\n' +
+'靠泊告警 ' + p[12] + '     锚泊告警 ' + p[13] + '     信标 ' + p[15] + ' m';
+document.getElementById('pbRange').value = pbIdx;
+}
+function togglePlay(){
+if(pbTimer){ clearInterval(pbTimer); pbTimer = null; return; }
+if(!pbData){ loadPlayback(); return; }
+pbTimer = setInterval(function(){
+if(pbIdx >= pbData.length - 1){ clearInterval(pbTimer); pbTimer = null; return; }
+showRec(pbIdx + 1);
+}, 300);
+}
+async function toggleLog(){
+const on = document.getElementById('btnLog').dataset.on === '1';
+try{ await fetch('/logctl?op=' + (on ? 'off' : 'on'), {cache:'no-store'}); }catch(e){}
+tick();
+}
+async function clearLog(){
+try{ await fetch('/logctl?op=clear', {cache:'no-store'}); }catch(e){}
+pbData = null; pbIdx = 0;
+document.getElementById('pbRange').max = 0;
+document.getElementById('pbInfo').textContent = '已清空。';
+tick();
 }
 function showTab(t){
-  document.querySelectorAll('.pane').forEach(function(p){
-    p.style.display = (t === 'all' || p.dataset.p === t) ? 'block' : 'none';
-  });
-  document.querySelectorAll('.tab').forEach(function(b){
-    b.classList.toggle('on', b.dataset.t === t);
-  });
+document.querySelectorAll('.pane').forEach(function(p){
+p.style.display = (t === 'all' || p.dataset.p === t) ? 'block' : 'none';
+});
+document.querySelectorAll('.tab').forEach(function(b){
+b.classList.toggle('on', b.dataset.t === t);
+});
 }
-
+/* ================= 信标—本船 相对态势图 =================
+画法：本船固定在圆心，信标按「东/北」相对位移落点。
+船头朝上：整个世界按本船航向反向旋转，画面正上方 = 船首方向。
+正北朝上：画面正上方 = 正北，和纸质海图一致。          */
+let lastData = null;
+let mapMode  = 'head';
+let mapTrail = [];
+const MAP_RANGE_STEPS = [10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 750, 1000,
+1500, 2000, 3000, 5000, 10000];
+function toggleMapMode(){
+mapMode = (mapMode === 'head') ? 'north' : 'head';
+updateMapButton();
+if(lastData) drawMap(lastData);
+}
+function clearMapTrail(){
+mapTrail = [];
+if(lastData) drawMap(lastData);
+}
+function updateMapButton(){
+const b = document.getElementById('btnMapMode');
+if(!b) return;
+b.textContent = '视图：' + (mapMode === 'head' ? '船头朝上' : '正北朝上');
+}
+function enuMeters(lat0, lon0, lat, lon){
+const R = 6378137.0;
+const rad = Math.PI / 180;
+return {
+e: (lon - lon0) * rad * R * Math.cos(lat0 * rad),
+n: (lat - lat0) * rad * R
+};
+}
+function fmtRange(m){
+if(m >= 1000) return (m / 1000).toFixed(m % 1000 === 0 ? 0 : 1) + ' km';
+return Math.round(m) + ' m';
+}
+function drawMap(d){
+const c = document.getElementById('map');
+if(!c) return;
+const g = c.getContext('2d');
+const W = c.width, H = c.height, cx = W / 2, cy = H / 2;
+const Rpx = Math.min(W, H) / 2 - 46;
+d = d || {};
+const ownOk  = !!d.valid;
+const hasTgt = !!d.haveDir;
+const online = !!d.linkUp;
+let hdg = null, hdgSrc = '';
+if(d.magOk && d.magCal){ hdg = d.heading; hdgSrc = '磁力计航向'; }
+else if(ownOk && d.speedKmh > 0.5){ hdg = d.course; hdgSrc = 'GPS 航迹向'; }
+const wantingHead = (mapMode === 'head');
+const headUp = wantingHead && (hdg !== null);
+const rot = headUp ? (hdg * Math.PI / 180) : 0;
+if(ownOk){
+const t = mapTrail.length ? mapTrail[mapTrail.length - 1] : null;
+if(!t || Math.abs(t.lat - d.lat) > 1e-5 || Math.abs(t.lon - d.lon) > 1e-5){
+mapTrail.push({lat: d.lat, lon: d.lon});
+if(mapTrail.length > 300) mapTrail.shift();
+}
+}
+let maxR = 100;
+if(hasTgt){
+maxR = MAP_RANGE_STEPS[MAP_RANGE_STEPS.length - 1];
+for(let i = 0; i < MAP_RANGE_STEPS.length; i++){
+if(d.distM <= MAP_RANGE_STEPS[i] * 0.85){ maxR = MAP_RANGE_STEPS[i]; break; }
+}
+}
+function toScreen(e, n){
+const e2 = e * Math.cos(rot) - n * Math.sin(rot);
+const n2 = e * Math.sin(rot) + n * Math.cos(rot);
+return {x: cx + (e2 / maxR) * Rpx, y: cy - (n2 / maxR) * Rpx};
+}
+g.fillStyle = '#0b1219';
+g.fillRect(0, 0, W, H);
+g.lineWidth = 1;
+for(let k = 1; k <= 4; k++){
+const r = Rpx * k / 4;
+g.strokeStyle = (k === 4) ? '#31414f' : '#1e2a35';
+g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
+}
+g.strokeStyle = '#1e2a35';
+g.beginPath(); g.moveTo(cx - Rpx, cy); g.lineTo(cx + Rpx, cy); g.stroke();
+g.beginPath(); g.moveTo(cx, cy - Rpx); g.lineTo(cx, cy + Rpx); g.stroke();
+g.fillStyle = '#5d6b78';
+g.font = '13px Consolas,Menlo,monospace';
+g.textAlign = 'left'; g.textBaseline = 'middle';
+for(let k = 1; k <= 4; k++){
+g.fillText(fmtRange(maxR * k / 4), cx + 6, cy - Rpx * k / 4);
+}
+const marks = [[0,'N'],[90,'E'],[180,'S'],[270,'W']];
+g.textAlign = 'center'; g.textBaseline = 'middle';
+for(let i = 0; i < marks.length; i++){
+const a = marks[i][0] * Math.PI / 180 - rot;
+const px = cx + Math.sin(a) * (Rpx + 22);
+const py = cy - Math.cos(a) * (Rpx + 22);
+g.fillStyle = (marks[i][1] === 'N') ? '#ff6b6b' : '#5d6b78';
+g.font = (marks[i][1] === 'N' ? 'bold ' : '') + '15px Consolas,Menlo,monospace';
+g.fillText(marks[i][1], px, py);
+}
+if(ownOk && mapTrail.length > 1){
+g.strokeStyle = 'rgba(245,158,11,0.55)';
+g.lineWidth = 2;
+g.beginPath();
+for(let i = 0; i < mapTrail.length; i++){
+const p = enuMeters(d.lat, d.lon, mapTrail[i].lat, mapTrail[i].lon);
+const s = toScreen(p.e, p.n);
+if(i) g.lineTo(s.x, s.y); else g.moveTo(s.x, s.y);
+}
+g.stroke();
+}
+let tgt = null;
+if(ownOk && hasTgt){
+const p = enuMeters(d.lat, d.lon, d.tLat, d.tLon);
+tgt = toScreen(p.e, p.n);
+g.save();
+g.setLineDash([8, 6]);
+g.strokeStyle = online ? 'rgba(239,68,68,0.75)' : 'rgba(120,130,140,0.5)';
+g.lineWidth = 2;
+g.beginPath(); g.moveTo(cx, cy); g.lineTo(tgt.x, tgt.y); g.stroke();
+g.restore();
+const mx = (cx + tgt.x) / 2, my = (cy + tgt.y) / 2;
+const txt = fmtRange(d.distM) + ' · ' + (d.dirText || '');
+g.font = 'bold 14px Consolas,Menlo,monospace';
+g.textAlign = 'center'; g.textBaseline = 'middle';
+const tw = g.measureText(txt).width + 14;
+g.fillStyle = 'rgba(11,18,25,0.88)';
+g.fillRect(mx - tw / 2, my - 12, tw, 24);
+g.fillStyle = online ? '#ffb1b1' : '#98a4b0';
+g.fillText(txt, mx, my);
+}
+if(tgt){
+if(online){
+const pulse = 11 + 6 * (1 + Math.sin(Date.now() / 380)) / 2;
+g.strokeStyle = 'rgba(239,68,68,0.35)';
+g.lineWidth = 2;
+g.beginPath(); g.arc(tgt.x, tgt.y, pulse, 0, Math.PI * 2); g.stroke();
+}
+g.fillStyle = online ? '#ef4444' : 'rgba(160,170,180,0.7)';
+g.beginPath(); g.arc(tgt.x, tgt.y, 9, 0, Math.PI * 2); g.fill();
+g.strokeStyle = '#0b1219'; g.lineWidth = 2;
+g.beginPath(); g.arc(tgt.x, tgt.y, 9, 0, Math.PI * 2); g.stroke();
+const lbl = (d.beaconId > 0 ? ('信标 ' + d.beaconId) : '信标') +
+(online ? '' : '（离线·最后位置）');
+g.font = 'bold 14px Consolas,Menlo,monospace';
+g.textAlign = 'left'; g.textBaseline = 'middle';
+g.fillStyle = online ? '#ff9b9b' : '#98a4b0';
+let lx = tgt.x + 16;
+const ly = tgt.y - 14;
+if(lx + g.measureText(lbl).width > W - 6){ g.textAlign = 'right'; lx = tgt.x - 16; }
+g.fillText(lbl, lx, ly);
+}
+g.save();
+g.translate(cx, cy);
+if(!headUp && hdg !== null) g.rotate(hdg * Math.PI / 180);
+g.beginPath();
+g.moveTo(0, -18); g.lineTo(13, 15); g.lineTo(0, 8); g.lineTo(-13, 15);
+g.closePath();
+g.fillStyle = ownOk ? '#38bdf8' : 'rgba(56,189,248,0.35)'; g.fill();
+g.strokeStyle = '#0b1219'; g.lineWidth = 2; g.stroke();
+g.restore();
+let note;
+if(!ownOk){
+note = '本船北斗未定位，无法算出相对位置。';
+}else if(!hasTgt){
+note = '还没收到信标坐标，正在等待信标回传。';
+}else if(!online){
+note = '信标链路已离线，图上显示的是最后一次收到的位置。';
+}else{
+note = '本船相对信标：' + fmtRange(d.distM) + '，方位 ' +
+(d.useRel ? ('相对船头 ' + d.relDirText) : d.dirText);
+}
+note += '　视图：' + (headUp
+? ('船头朝上（用' + hdgSrc + '）')
+: (wantingHead ? '正北朝上（没有可用航向，已自动切换）' : '正北朝上'));
+const ne = document.getElementById('mapNote');
+if(ne) ne.textContent = note;
+const sc = document.getElementById('mapScale');
+if(sc) sc.textContent = '量程 ' + fmtRange(maxR);
+updateMapButton();
+}
 tick(); setInterval(tick, 1000);
+drawMap(null);
+updateMapButton();
+setInterval(function(){
+if(!lastData || !lastData.linkUp) return;
+const c = document.getElementById('map');
+if(!c || c.offsetParent === null) return;
+drawMap(lastData);
+}, 120);
 </script>
 </body>
-</html>
-)HTML";
+</html>)HTML";
 
 /* ---------------- JSON 接口 ---------------- */
 
@@ -348,6 +625,7 @@ static String buildJson() {
   snprintf(num, sizeof(num), "%.6f", beaconLat()); j += ",\"tLat\":"; j += num;
   snprintf(num, sizeof(num), "%.6f", beaconLon()); j += ",\"tLon\":"; j += num;
   snprintf(num, sizeof(num), "%.0f", beaconDistM()); j += ",\"distM\":"; j += num;
+  snprintf(num, sizeof(num), "%.0f", beaconBearing()); j += ",\"bearing\":"; j += num;
   j += ",\"dirText\":\"";   j += escapeJson(String(beaconDirText())); j += "\"";
   j += ",\"useRel\":";      j += (beaconUseRel() ? "true" : "false");
   j += ",\"relDirText\":\""; j += escapeJson(String(beaconRelDirText())); j += "\"";
@@ -376,6 +654,10 @@ static String buildJson() {
   j += ",\"anchorAlarm\":";  j += anchorAlarmCode();
   j += ",\"anchorAlarmText\":\""; j += escapeJson(anchorAlarmText()); j += "\"";
   j += ",\"anchorHist\":\""; j += anchorDriftHistory(); j += "\"";
+  j += ",\"logOn\":";     j += (logbookOn() ? "true" : "false");
+  j += ",\"logCount\":";  j += logbookCount();
+  j += ",\"logCap\":";    j += logbookCapacity();
+  j += ",\"logSpan\":";   j += logbookSpanSec();
   j += ",\"runSec\":";     j += (millis() / 1000);
   j += "}";
   return j;
@@ -391,6 +673,16 @@ static void handleData() {
 
 static void handleNotFound() {
   server.send(404, "text/plain; charset=utf-8", "404 Not Found");
+}
+
+// 导出记录：分块发送，避免一次性拼出几十 KB 的字符串把堆撑爆
+static void handleLogCSV() {
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/csv; charset=utf-8", "");
+  server.sendContent(logbookHeader());
+  server.sendContent("\n");
+  for (uint16_t k = 0; k < logbookCount(); k++) server.sendContent(logbookLine(k));
+  server.sendContent("");          // 结束分块
 }
 
 /* ---------------- WiFi ---------------- */
@@ -516,6 +808,14 @@ void netBegin() {
   server.on("/moor", []() {
     if (server.arg("set") == "1") anchorSetReference();
     else                          anchorClearReference();
+    server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
+  });
+  server.on("/log", handleLogCSV);
+  server.on("/logctl", []() {
+    String op = server.arg("op");
+    if      (op == "on")    logbookSetOn(true);
+    else if (op == "off")   logbookSetOn(false);
+    else if (op == "clear") logbookClear();
     server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
   });
   server.onNotFound(handleNotFound);

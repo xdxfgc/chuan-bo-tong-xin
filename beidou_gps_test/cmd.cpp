@@ -8,6 +8,7 @@
 #include "berth.h"
 #include "buzzer.h"
 #include "anchor.h"
+#include "logbook.h"
 
 static char   s_buf[32];
 static size_t s_n = 0;
@@ -27,6 +28,9 @@ static void printHelp() {
   Serial.println("  moor set    把当前位置设为锚泊基准，开始走锚监测");
   Serial.println("  moor clear  清除锚泊基准，停止监测");
   Serial.println("  moor        打印锚泊状态（位移、漂移方向与速率）");
+  Serial.println("  log on/off  开始或暂停数据记录（网页上也有按钮）");
+  Serial.println("  log dump    把已记录的数据以 CSV 打印到串口");
+  Serial.println("  log clear   清空记录");
   Serial.println("  scan        扫描磁力计所在的 I2C 总线");
   Serial.println("------------------------------------------");
 }
@@ -69,6 +73,21 @@ static void runCmd(char* cmd) {
     if      (arg == "set")   anchorSetReference();
     else if (arg == "clear") anchorClearReference();
     else                     anchorPrintReport();
+    return;
+  }
+
+  if (low.startsWith("log")) {
+    String arg = low.substring(3); arg.trim();
+    if (arg == "on")         logbookSetOn(true);
+    else if (arg == "off")   logbookSetOn(false);
+    else if (arg == "clear") logbookClear();
+    else if (arg == "dump") {
+      Serial.println(logbookHeader());
+      for (uint16_t k = 0; k < logbookCount(); k++) Serial.print(logbookLine(k));
+      Serial.printf("# 共 %u 条\n", (unsigned)logbookCount());
+    } else {
+      logbookPrintStatus();
+    }
     return;
   }
 
