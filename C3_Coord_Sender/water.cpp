@@ -15,10 +15,6 @@
 
 #include "water.h"
 
-#if WATER_SIM_CMD && SRC_MODE == 3
-#error "SRC_MODE 3（串口输入坐标）和 WATER_SIM_CMD 都要读串口，不能同时开：把 WATER_SIM_CMD 改成 0"
-#endif
-
 static bool          s_wet         = false;   // 本次采样结果
 static unsigned long s_wetSinceMs  = 0;       // 从什么时候开始连续湿
 static unsigned long s_lastSampleMs = 0;
@@ -149,42 +145,15 @@ void waterPrintStatus() {
   }
 }
 
-#if WATER_SIM_CMD
-/* ---------------- 串口模拟命令 ----------------
-   wet on    强制置为"入水"
-   wet off   解除强制，恢复真实采样
-   wet       打印当前状态
-   演示时信标装进壳子里了，不用去短接引脚。                             */
+/* ---------------- 演示用的强制开关 ----------------
+   串口命令 wet on / wet off 调这两个函数（命令的解析统一放在 cmd.cpp）。 */
 
-static char   s_cmd[24];
-static size_t s_cmdLen = 0;
-
-void waterPollCommand() {
-  while (DBG.available()) {
-    char c = (char)DBG.read();
-    if (c == '\n' || c == '\r') {
-      if (s_cmdLen) {
-        s_cmd[s_cmdLen] = '\0';
-        if (!strcmp(s_cmd, "wet on")) {
-          s_simForced  = true;
-          s_wet        = true;
-          s_wetSinceMs = millis();
-          DBG.println("[水感] 已强制置为“入水”（模拟）");
-        } else if (!strcmp(s_cmd, "wet off")) {
-          s_simForced = false;
-          DBG.println("[水感] 已解除强制，恢复真实采样");
-        } else if (!strcmp(s_cmd, "wet")) {
-          waterPrintStatus();
-        }
-        s_cmdLen = 0;
-      }
-    } else if (s_cmdLen < sizeof(s_cmd) - 1) {
-      s_cmd[s_cmdLen++] = (char)tolower((unsigned char)c);   // 统一转小写
-    } else {
-      s_cmdLen = 0;                                          // 太长就丢弃
-    }
+void waterSetSim(bool on) {
+  s_simForced = on;
+  if (on) {
+    s_wet        = true;
+    s_wetSinceMs = millis();
   }
 }
-#else
-void waterPollCommand() {}      // 没打开命令就什么都不做
-#endif
+
+bool waterSimForced() { return s_simForced; }
