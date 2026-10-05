@@ -29,6 +29,9 @@
 
 static uint32_t seq     = 0;  // 帧序号，每轮加一
 static bool     saidIdle = false;   // "未入水，保持静默"只在开始时提示一次
+#if SEND_ONLY_WET
+static bool     s_reporting = false;   // 当前是不是处于"已确认落水、正在上报"的状态
+#endif
 
 void setup() {
   DBG.begin(115200);
@@ -58,12 +61,29 @@ void loop() {
   }
 
 #if SEND_ONLY_WET
-  /* 没入水就保持静默 —— 这才是真正信标的行为：平时睡觉，落水才醒。
-     船端那边 15 秒后会显示"离线"，这是对的，不是故障。 */
-  if (!waterIsWet()) {
-    if (!saidIdle) { saidIdle = true; DBG.println("[信标] 未入水，保持静默（等入水才开始上报）"); }
-    delay(100);               // 别空转
+  /* 三重确认里的"持续时间"：碰到水不算数，要连续湿够 WATER_CONFIRM_MS
+     才认为真的落水了。这样线头抖一下、浪溅一下都不会触发。
+     （采样间隔是 WATER_SAMPLE_MS，所以实际确认时间比设定值多半个采样周期） */
+  bool wetConfirmed = waterIsWet() && (waterWetMs() >= WATER_CONFIRM_MS);
+
+  if (!wetConfirmed) {
+    if (s_reporting) {                 // 刚才还在上报，现在断了
+      s_reporting = false;
+      DBG.println("[信标] 已离水，恢复静默");
+    }
+    if (!waterIsWet() && !saidIdle) {  // 只是没入水，提示一次就够
+      saidIdle = true;
+      DBG.println("[信标] 未入水，保持静默（等入水才开始上报）");
+    }
+    /* 湿了但还没满确认时间 —— 水感模块自己的状态行会说明进展，这里不重复刷 */
+    delay(100);                        // 别空转
     return;
+  }
+
+  if (!s_reporting) {
+    s_reporting = true;
+    saidIdle    = false;               // 下次离水后还要能重新提示一次
+    DBG.printf("[信标] 确认落水（连续湿 %.1f 秒），开始上报\n", waterWetMs() / 1000.0);
   }
 #endif
 
