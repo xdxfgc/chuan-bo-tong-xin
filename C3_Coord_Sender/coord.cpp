@@ -17,6 +17,18 @@ static int    gLen   = 0;
 static bool   gValid = false;
 static double gLat = 0.0, gLon = 0.0;
 
+/* 调试用的状态。只有 SRC_MODE == 2 会用到，所以不会占别的模式的空间。 */
+static int           gSats       = 0;      // 参与定位的卫星数（GGA 第 8 字段）
+static int           gFixQuality = 0;      // GGA 第 7 字段：0=没定位 1=单点 2=差分
+static unsigned long gLastFixMs  = 0;      // 最近一次「定位有效」的时刻
+static unsigned long gLastGgaMs  = 0;      // 最近一次收到 GGA 的时刻（不管定没定上）
+static unsigned long gLastMsgMs  = 0;      // 状态打印节流
+
+/* 超过这么久没有再收到有效定位，就当定位丢了。
+   光靠 gValid 是不行的：模块被拔掉之后 gValid 会一直停在 true，
+   信标就会拿着一份过期的坐标不停往外发。                          */
+#define GNSS_STALE_MS 10000UL
+
 // 度分（ddmm.mmmm）转十进制度
 static double nmeaDeg(double raw, char hemi) {
   int    deg = (int)(raw / 100.0);
@@ -59,8 +71,23 @@ static void gnssHandleLine(char* line) {
   if (a[0]) gLat = nmeaDeg(atof(a), b[0]);
   nmeaField(line, 4, a, sizeof(a)); nmeaField(line, 5, b, sizeof(b));
   if (a[0]) gLon = nmeaDeg(atof(a), b[0]);
+
+  // 第 7 字段是定位质量，第 8 字段是参与定位的卫星数
   nmeaField(line, 6, a, sizeof(a));
-  gValid = (atoi(a) > 0);
+  gFixQuality = atoi(a);
+  nmeaField(line, 7, a, sizeof(a));
+  gSats = atoi(a);
+
+  gLastGgaMs = millis();
+
+  /* 只有「质量 > 0」而且坐标不是 (0,0) 才算真的定上位。
+     没定位的 GGA 每个字段都是空的，atof 会得到 0，所以要一起判断。 */
+  if (gFixQuality > 0 && !(fabs(gLat) < 1e-9 && fabs(gLon) < 1e-9)) {
+    gValid     = true;
+    gLastFixMs = millis();
+  }
+  /* 定位质量变 0 时这里不立刻置无效，交给 gnssCheckStale 按超时判，
+     免得卫星偶尔掉一下坐标就闪断。 */
 }
 
 static void gnssPollOnce() {
@@ -73,6 +100,35 @@ static void gnssPollOnce() {
     } else {
       gLen = 0;
     }
+  }
+}
+
+// 定位超时检查：太久没有有效定位就当丢了
+static void gnssCheckStale() {
+  if (gValid && millis() - gLastFixMs > GNSS_STALE_MS) {
+    gValid = false;
+  }
+}
+
+/* 每 5 秒打一行状态。
+   这一行的用处是把三种情况分开，不然调试时只能干瞪眼：
+     完全没数据   -> 接线/波特率/供电不对（TX、RX 接反是最常见的）
+     有数据没定位 -> 在正常搜星，把天线挪到窗边或室外
+     已定位       -> 正常，下面接着打印卫星数和坐标                     */
+static void gnssPrintStatus() {
+  if (gLastMsgMs != 0 && millis() - gLastMsgMs < 5000) return;
+  gLastMsgMs = millis();
+
+  if (gLastGgaMs == 0) {
+    DBG.println("[北斗] 一句数据都没收到 —— 检查 TXD/RXD 有没有接反、"
+                "波特率是不是 9600、模块供电和共地");
+  } else if (millis() - gLastGgaMs > 3000) {
+    DBG.println("[北斗] 串口断了，之前有数据现在没有 —— 检查接线是不是松了");
+  } else if (gValid) {
+    DBG.printf("[北斗] 已定位  卫星 %d  %.6f, %.6f\n", gSats, gLat, gLon);
+  } else {
+    DBG.printf("[北斗] 正在搜星…（卫星 %d，还没定上位）天线贴窗边或拿到室外会快很多\n",
+               gSats);
   }
 }
 #endif   // SRC_MODE == 2
@@ -120,8 +176,10 @@ static void pollSerialCoord() {
 void coordBegin() {
 #if SRC_MODE == 2
   GnssSerial.begin(GNSS_BAUD, SERIAL_8N1, GNSS_RX_PIN, GNSS_TX_PIN);
-  DBG.printf("本端北斗：UART1 RX=GPIO%d TX=GPIO%d %d bps\n",
+  DBG.printf("本端北斗：UART1 RX=GPIO%d TX=GPIO%d  %d bps\n",
              GNSS_RX_PIN, GNSS_TX_PIN, GNSS_BAUD);
+  DBG.println("          模块 TXD -> 上面的 RX 脚，模块 RXD -> 上面的 TX 脚（要交叉）");
+  DBG.println("          冷启动第一次定位要 30~60 秒，室内基本定不上，把天线贴窗边或拿出去");
 #elif SRC_MODE == 3
   DBG.println("坐标来源：串口手动输入（还没输入过，当前按“未定位”发送）");
   DBG.println("用法：在串口监视器里敲 纬度,经度 再回车，例如 26.210000,111.600000");
@@ -131,6 +189,8 @@ void coordBegin() {
 void coordPoll() {
 #if SRC_MODE == 2
   gnssPollOnce();
+  gnssCheckStale();
+  gnssPrintStatus();
 #elif SRC_MODE == 3
   pollSerialCoord();
 #endif
