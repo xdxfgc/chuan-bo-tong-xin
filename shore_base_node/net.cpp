@@ -8,6 +8,7 @@
 #include "track.h"
 #include "tof.h"
 #include "oled.h"
+#include "logbook.h"
 
 static WebServer server(WEB_PORT);
 static unsigned long lastWifiTry = 0;
@@ -53,6 +54,9 @@ static const char INDEX_HTML[] = R"HTML(
   .raw{color:#9ec7e8}
   a{color:var(--accent)}
   canvas{width:100%;height:130px;background:#0b1219;border:1px solid var(--line);border-radius:10px}
+  /* 态势图是正方形，别被上面那条 canvas 规则压扁 */
+  #smap{width:100%;height:auto;aspect-ratio:1/1;display:block;
+        background:#0b1219;border:1px solid var(--line);border-radius:10px}
   .tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
   .tab{padding:8px 16px;border-radius:999px;border:1px solid var(--line);
        background:#1a232e;color:var(--dim);font-size:14px;cursor:pointer}
@@ -60,7 +64,8 @@ static const char INDEX_HTML[] = R"HTML(
   .pane{display:none}
   .btn{padding:9px 16px;border-radius:10px;border:1px solid var(--line);
        background:#1a232e;color:var(--txt);font-size:14px;cursor:pointer;
-       font-family:inherit;margin:0 8px 12px 0}
+       font-family:inherit;margin:0 8px 12px 0;display:inline-block;
+       text-decoration:none;line-height:1.2}
   .btn.off{background:#22303c;color:var(--dim)}
   table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;
             font-variant-numeric:tabular-nums}
@@ -83,6 +88,7 @@ static const char INDEX_HTML[] = R"HTML(
     <button class="tab" data-t="2" onclick="showTab('2')">② 落水信标</button>
     <button class="tab" data-t="3" onclick="showTab('3')">③ 船端</button>
     <button class="tab" data-t="4" onclick="showTab('4')">④ 原始数据</button>
+    <button class="tab" data-t="5" onclick="showTab('5')">⑤ 数据记录</button>
   </div>
 
   <section class="pane" data-p="1" style="display:block">
@@ -132,6 +138,11 @@ static const char INDEX_HTML[] = R"HTML(
   </table>
   <p class="sub">多只信标同时落水时这里会各占一行；顶部横幅按最紧急的那只提示。</p>
   <p class="sub">收到信标 M 帧时本节点会回 ACK，岸端同样具备落水接收能力。</p>
+
+  <h2>态势图（以岸基为中心，正北朝上）</h2>
+  <canvas id="smap" width="720" height="720"></canvas>
+  <p class="sub">中心是岸基节点。蓝点=岸基，圆点=信标（按编号配色），绿点=船端。
+  距离圈会自动缩放；远处看全局、近处看细节。</p>
   </section>
 
   <section class="pane" data-p="3">
@@ -161,6 +172,24 @@ static const char INDEX_HTML[] = R"HTML(
   <p class="sub">地图</p>
   <div class="raw" id="maplink">待定位</div>
   <p class="sub" id="foot">运行时间 -- 秒</p>
+  </section>
+
+  <section class="pane" data-p="5">
+  <h2>⑤ 数据记录</h2>
+  <div class="grid">
+    <div class="card"><div class="k">记录状态</div><div class="v small" id="logstate">--</div></div>
+    <div class="card"><div class="k">已记录 / 容量</div><div class="v" id="logcount">--</div></div>
+    <div class="card"><div class="k">覆盖时长</div><div class="v" id="logspan">--</div></div>
+  </div>
+  <div>
+    <button class="btn" id="btnLog" data-on="1" onclick="toggleLog()">暂停记录</button>
+    <a class="btn" id="btnCsv" href="/log" download="shore_log.csv">下载 CSV</a>
+    <button class="btn" onclick="clearLog()">清空</button>
+  </div>
+  <p class="sub">每秒存一帧：本节点定位、主信标（编号/链路/坐标/距离/方位）、
+  船端（链路/坐标/距离/方位/速度/航向/卫星）、岸侧测距。
+  CSV 带表头，Excel 直接能开 —— 文档要求的“输入输出全部记录以便复核”就是它。</p>
+  <p class="sub">记录只占内存、不写 flash；断电就没了。容量 900 条 ≈ 15 分钟。</p>
   </section>
 </div>
 <script>
@@ -259,6 +288,18 @@ async function tick(){
                      '&mlon='+d.lon+'#map=17/'+d.lat+'/'+d.lon+'">在 OpenStreetMap 上查看本节点位置</a>';
     } else { ml.textContent = '待定位'; }
     document.getElementById('foot').textContent = '运行时间 ' + d.runSec + ' 秒';
+
+    /* 数据记录状态 */
+    document.getElementById('logstate').textContent = d.logOn ? '记录中' : '已暂停';
+    document.getElementById('logcount').textContent = d.logCount + ' / ' + d.logCap;
+    document.getElementById('logspan').textContent  = d.logSpan + ' 秒';
+    const lb = document.getElementById('btnLog');
+    lb.dataset.on = d.logOn ? '1' : '0';
+    lb.textContent = d.logOn ? '暂停记录' : '继续记录';
+    lb.className = 'btn' + (d.logOn ? '' : ' off');
+
+    /* 态势图 */
+    drawMap(d);
   }catch(e){
     const b = document.getElementById('banner');
     b.className='banner bad';
@@ -283,6 +324,120 @@ function fmtAge(s){
   if(s < 3600) return Math.floor(s / 60) + ' 分前';
   return Math.floor(s / 3600) + ' 时前';
 }
+
+/* ---------------- 态势图 ----------------
+   以岸基为中心、正北朝上：蓝点=岸基，圆点=信标（按编号配色），绿点=船端。
+   距离圈自动套到整齐的档位（50/100/200/500/1000/2000/5000 米）。
+   ------------------------------------------------------------------ */
+const MAP_STEPS  = [50, 100, 200, 500, 1000, 2000, 5000];
+const TGT_COLORS = ['#ff6b6b', '#ffb454', '#7ee2a8', '#c792ea'];
+
+function fmtRange(m){
+  if(m >= 1000) return (m / 1000).toFixed(m % 1000 ? 1 : 0) + ' km';
+  return m.toFixed(0) + ' m';
+}
+
+function drawMap(d){
+  const c = document.getElementById('smap');
+  if(!c) return;
+  const g = c.getContext('2d');
+  const W = c.width, H = c.height, cx = W / 2, cy = H / 2;
+  const Rpx = Math.min(W, H) / 2 - 34;
+
+  /* 量程：取最远的目标，再套到整齐的档位上 */
+  let far = 0;
+  if(d.bHaveDir) far = Math.max(far, d.bDist);
+  if(d.vHaveDir) far = Math.max(far, d.vDist);
+  if(d.bs) d.bs.forEach(function(x){ if(x.haveDir) far = Math.max(far, x.dist); });
+  let maxR = MAP_STEPS[0];
+  for(let i = 0; i < MAP_STEPS.length; i++){
+    maxR = MAP_STEPS[i];
+    if(far <= MAP_STEPS[i] * 0.8) break;
+  }
+
+  function toScreen(brg, dist){
+    const a = brg * Math.PI / 180;
+    return { x: cx + Math.sin(a) * (dist / maxR) * Rpx,
+             y: cy - Math.cos(a) * (dist / maxR) * Rpx };
+  }
+
+  g.fillStyle = '#0b1219';
+  g.fillRect(0, 0, W, H);
+
+  /* 距离圈 */
+  g.lineWidth = 1;
+  for(let k = 1; k <= 4; k++){
+    g.strokeStyle = (k === 4) ? '#31414f' : '#1e2a35';
+    g.beginPath(); g.arc(cx, cy, Rpx * k / 4, 0, Math.PI * 2); g.stroke();
+  }
+  /* 十字线 */
+  g.strokeStyle = '#1e2a35';
+  g.beginPath(); g.moveTo(cx - Rpx, cy); g.lineTo(cx + Rpx, cy); g.stroke();
+  g.beginPath(); g.moveTo(cx, cy - Rpx); g.lineTo(cx, cy + Rpx); g.stroke();
+
+  /* 距离刻度 */
+  g.fillStyle = '#5d6b78';
+  g.font = '12px Consolas,Menlo,monospace';
+  g.textAlign = 'left'; g.textBaseline = 'middle';
+  for(let k = 1; k <= 4; k++) g.fillText(fmtRange(maxR * k / 4), cx + 5, cy - Rpx * k / 4);
+
+  /* 方位标记 */
+  const marks = [[0,'N'],[90,'E'],[180,'S'],[270,'W']];
+  g.textAlign = 'center';
+  for(let i = 0; i < marks.length; i++){
+    const a = marks[i][0] * Math.PI / 180;
+    const px = cx + Math.sin(a) * (Rpx + 16);
+    const py = cy - Math.cos(a) * (Rpx + 16);
+    g.fillStyle = (marks[i][1] === 'N') ? '#ff6b6b' : '#5d6b78';
+    g.font = (marks[i][1] === 'N' ? 'bold ' : '') + '13px Consolas,Menlo,monospace';
+    g.fillText(marks[i][1], px, py);
+  }
+
+  function dot(brg, dist, color, label){
+    const p = toScreen(brg, dist);
+    g.fillStyle = color;
+    g.beginPath(); g.arc(p.x, p.y, 6, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#e6edf3';
+    g.font = '11px Consolas,Menlo,monospace';
+    g.textAlign = 'left'; g.textBaseline = 'middle';
+    g.fillText(label, p.x + 9, p.y + 1);
+  }
+
+  /* 信标（多只，按编号配色） */
+  if(d.bs){
+    for(let i = 0; i < d.bs.length; i++){
+      const x = d.bs[i];
+      if(!x.haveDir) continue;
+      dot(x.brg, x.dist, TGT_COLORS[i % TGT_COLORS.length],
+          x.id > 0 ? ('信标' + x.id) : '信标');
+    }
+  }
+
+  /* 船端 */
+  if(d.vHaveDir) dot(d.vBrg, d.vDist, '#38bdf8', '船端');
+
+  /* 中心：岸基自己 */
+  g.fillStyle = '#e6edf3';
+  g.beginPath(); g.arc(cx, cy, 5, 0, Math.PI * 2); g.fill();
+  g.font = '11px Consolas,Menlo,monospace';
+  g.textAlign = 'left'; g.textBaseline = 'middle';
+  g.fillText('岸基', cx + 8, cy + 1);
+
+  /* 右上角标量程 */
+  g.fillStyle = '#5d6b78';
+  g.textAlign = 'right';
+  g.fillText('量程 ' + fmtRange(maxR), cx + Rpx, cy - Rpx - 8);
+}
+
+/* ---------------- 数据记录控制 ---------------- */
+async function logCtl(op){
+  try { await fetch('/logctl?op=' + op, {cache:'no-store'}); } catch(e){}
+}
+function toggleLog(){
+  const on = document.getElementById('btnLog').dataset.on === '1';
+  logCtl(on ? 'off' : 'on');
+}
+function clearLog(){ logCtl('clear'); }
 tick(); setInterval(tick, 1000);
 </script>
 </body>
@@ -361,6 +516,7 @@ static String buildJson() {
   snprintf(num, sizeof(num), "%.6f", v.lon); j += ",\"vLon\":"; j += num;
   j += ",\"vHaveDir\":"; j += (v.haveDir ? "true" : "false");
   snprintf(num, sizeof(num), "%.0f", v.distM);  j += ",\"vDist\":"; j += num;
+  snprintf(num, sizeof(num), "%.0f", v.bearing); j += ",\"vBrg\":";  j += num;
   j += ",\"vDirText\":\""; j += escapeJson(String(trackDirText(v))); j += "\"";
 
   /* 船端的附加数据（只有 S 帧带；收到的是 A 帧时保留上一次的值） */
@@ -393,6 +549,7 @@ static String buildJson() {
     snprintf(num, sizeof(num), "%.6f", t.lon);    j += ",\"lon\":";  j += num;
     j += ",\"haveDir\":"; j += (t.haveDir ? "true" : "false");
     snprintf(num, sizeof(num), "%.0f", t.distM);  j += ",\"dist\":"; j += num;
+    snprintf(num, sizeof(num), "%.0f", t.bearing); j += ",\"brg\":"; j += num;
     j += ",\"dirText\":\""; j += escapeJson(String(trackDirText(t))); j += "\"";
     {
       uint32_t at = trackAgeMs(t);
@@ -404,6 +561,11 @@ static String buildJson() {
   j += "]";
 
   j += ",\"runSec\":";     j += (millis() / 1000);
+  /* 数据记录状态 */
+  j += ",\"logOn\":";      j += (logbookOn() ? "true" : "false");
+  j += ",\"logCount\":";   j += logbookCount();
+  j += ",\"logCap\":";     j += logbookCapacity();
+  j += ",\"logSpan\":";    j += logbookSpanSec();
   j += "}";
   return j;
 }
@@ -414,6 +576,15 @@ static void handleRoot() {
 
 static void handleData() {
   server.send(200, "application/json; charset=utf-8", buildJson());
+}
+
+/* 下载 CSV：带表头，Excel 直接能开 */
+static void handleLogCSV() {
+  String csv = logbookCSV();
+  server.sendHeader("Content-Disposition", "attachment; filename=shore_log.csv");
+  server.send(200, "text/csv; charset=utf-8", csv);
+  Serial.printf("[记录] 已导出 CSV：%u 条，约 %u 字节\n",
+                (unsigned)logbookCount(), (unsigned)csv.length());
 }
 
 static void handleNotFound() {
@@ -531,6 +702,14 @@ void netBegin() {
   server.on("/ack", []() {
     trackAcknowledge();
     server.send(200, "text/plain; charset=utf-8", "ok");
+  });
+  server.on("/log", handleLogCSV);
+  server.on("/logctl", []() {
+    String op = server.arg("op");
+    if      (op == "on")    logbookSetOn(true);
+    else if (op == "off")   logbookSetOn(false);
+    else if (op == "clear") logbookClear();
+    server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
   });
   server.onNotFound(handleNotFound);
   server.begin();

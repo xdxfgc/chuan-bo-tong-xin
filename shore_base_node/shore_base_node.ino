@@ -16,6 +16,7 @@
      tof.h / tof.cpp        VL53L1X 激光测距：岸侧本地测距
      net.h / net.cpp        WiFi 与网页服务（页面 + JSON 接口）
      oled.h / oled.cpp      OLED 显示：信标界面与岸基状态
+     logbook.h / logbook.cpp  数据记录与回放：每秒存一帧，网页下载 CSV
 
    三端协议（详见 config.h）：前缀区分角色，第 2 个字段是发送者编号
      M,<信标ID>,<序号>,P,…      信标上报落水位置
@@ -33,6 +34,7 @@
 #include "tof.h"
 #include "net.h"
 #include "oled.h"
+#include "logbook.h"
 
 
 /* LoRa 统一轮询：收一包并按类型分发
@@ -96,6 +98,7 @@ void setup() {
   loraBegin();    // LoRa（失败会在 loraPollAll 里每 2 秒重试）
   voiceBegin();   // 语音串口（UART2，GPIO16/4）
   trackBegin();   // 信标与船端跟踪状态
+  logbookBegin(); // 数据记录（黑匣子）
   tofBegin();     // 激光测距（I2C 与 OLED 共用 GPIO21/22）
   oledBegin();    // OLED 屏幕（放在 netBegin 前面，别让屏陪着一起等 WiFi）
   netBegin();     // WiFi + 网页服务
@@ -109,6 +112,7 @@ void loop() {
   loraPollAll();    // 统一收 LoRa 一包并分发（信标 / 船端）
   shoreBroadcast(); // 每 2 秒广播本节点参考站位置（R 帧）
   trackUpdate();    // 刷新距离方位、判断链路超时
+  logbookUpdate();  // 数据记录：每秒存一帧
   tofUpdate();      // 读一次激光测距
   netLoop();        // 处理网页请求与 WiFi 重连
   oledUpdate();     // 刷新屏幕
@@ -120,5 +124,6 @@ void loop() {
     gpsPrintReport();
     trackPrintReport();
     tofPrintReport();
+    logbookPrintStatus();
   }
 }

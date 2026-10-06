@@ -143,4 +143,13 @@ static const uint32_t BEACON_LOST_MS = 15000;   // 超过这么久没收到信�
 /* ---------------- 调试串口（USB） ---------------- */
 static const uint32_t DBG_BAUD = 115200;
 
+/* ---------------- 数据记录（黑匣子） ----------------
+   每秒把一帧系统状态压进 RAM 环形缓冲，网页可下载 CSV、串口可 dump。
+   只占内存不碰 flash —— flash 每秒写一次会磨损。
+   容量 900 条 × 1 秒 ≈ 15 分钟；内存不够就调小。                    */
+#define LOGBOOK_ENABLE   1
+#define LOGBOOK_CAPACITY 900        // 记录条数
+static const uint32_t LOG_INTERVAL_MS = 1000;   // 采样间隔
+#define LOG_SERIAL_CSV   0          // 1 = 每秒也往串口打一行 CSV（默认关，免得刷屏）
+
 #endif
