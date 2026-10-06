@@ -9,12 +9,15 @@
 #define CB_BEACON_H
 
 #include "config.h"
+#include "lora_link.h"     // 用 TargetPacket
 
 void beaconBegin();            // 初始化信标状态
 void beaconUpdate();           // 周期调用：收包、算方位、播报、判断链路超时
+void beaconOnPacket(const TargetPacket& pkt);   // 收到信标 M 帧后调用（由主程序分发）
 void beaconPrintReport();      // 打印信标链路状态
 
 bool        beaconLinkUp();      // 链路是否在线
+uint32_t    beaconLastPacketAgeMs(); // 距上次收到信标包过了多少毫秒；从未收到过返回 0xFFFFFFFF
 bool        beaconHasTarget();   // 是否收到过信标坐标
 bool        beaconTargetValid(); // 信标定位是否有效
 uint32_t    beaconSeq();         // 最近一包的序号

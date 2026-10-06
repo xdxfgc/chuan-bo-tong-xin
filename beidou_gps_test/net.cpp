@@ -8,6 +8,7 @@
 #include "imu.h"
 #include "mag.h"
 #include "beacon.h"
+#include "shore.h"
 #include "berth.h"
 #include "buzzer.h"
 #include "anchor.h"
@@ -85,6 +86,7 @@ background:#1a232e;color:var(--dim);font-size:14px;cursor:pointer}
 <div class="banner" id="banner">正在等待数据…</div>
 <div class="bar">
 <button id="btnBuzz" class="btn" onclick="toggleBuzz()">蜂鸣器：--</button>
+<button id="btnAck" class="btn" onclick="ackAlarm()">无落水告警</button>
 <button id="btnMoor" class="btn" onclick="toggleMoor()">设锚泊基准</button>
 </div>
 <div class="tabs">
@@ -97,6 +99,7 @@ background:#1a232e;color:var(--dim);font-size:14px;cursor:pointer}
 <button class="tab" data-t="6" onclick="showTab('6')">⑥ 信标</button>
 <button class="tab" data-t="7" onclick="showTab('7')">⑦ 原始数据</button>
 <button class="tab" data-t="8" onclick="showTab('8')">⑧ 数据记录</button>
+<button class="tab" data-t="9" onclick="showTab('9')">⑨ 岸基</button>
 </div>
 <section class="pane" data-p="1" style="display:block">
 <h2>① 北斗定位</h2>
@@ -117,7 +120,8 @@ background:#1a232e;color:var(--dim);font-size:14px;cursor:pointer}
 <section class="pane" data-p="2">
 <h2>② 激光测距</h2>
 <div class="grid">
-<div class="card"><div class="k">距岸距离</div><div class="v" id="tof">--</div></div>
+<div class="card"><div class="k">前方距离（船头）</div><div class="v" id="tof">--</div></div>
+<div class="card"><div class="k">右舷距离（到码头）</div><div class="v" id="tof2">--</div></div>
 </div>
 </section>
 <section class="pane" data-p="3">
@@ -134,7 +138,8 @@ background:#1a232e;color:var(--dim);font-size:14px;cursor:pointer}
 <div class="grid">
 <div class="card"><div class="k">距岸距离</div><div class="v" id="bdist">--</div></div>
 <div class="card"><div class="k">接近速度</div><div class="v" id="bspd">--</div></div>
-<div class="card"><div class="k">靠泊状态</div><div class="v small" id="bstate">--</div></div>
+    <div class="card"><div class="k">靠泊状态</div><div class="v small" id="bstate">--</div></div>
+    <div class="card"><div class="k">数据来源</div><div class="v small" id="bsrc">--</div></div>
 </div>
 </section>
 <section class="pane" data-p="5">
@@ -203,6 +208,18 @@ background:#1a232e;color:var(--dim);font-size:14px;cursor:pointer}
 style="width:100%;margin:6px 0 12px" oninput="showRec(this.value)">
 <div class="raw" id="pbInfo">未加载</div>
 </section>
+
+<section class="pane" data-p="9">
+<h2>⑨ 岸基节点</h2>
+<div class="grid">
+<div class="card"><div class="k">岸基链路</div><div class="v small" id="shlink">--</div></div>
+<div class="card"><div class="k">岸基编号</div><div class="v small" id="shid">--</div></div>
+<div class="card"><div class="k">距岸基</div><div class="v" id="shdist">--</div></div>
+<div class="card"><div class="k">岸基方位</div><div class="v" id="shdir">--</div></div>
+</div>
+<p class="sub">岸基节点固定在码头上，每 2 秒广播一条 R 参考帧。
+船在远处时靠它就知道离码头还有多远（激光只能看 4 米）。岸基只做参考点，不告警不播报。</p>
+</section>
 </div>
 <script>
 async function tick(){
@@ -239,23 +256,33 @@ document.getElementById('bj').textContent    = d.bj;
 document.getElementById('date').textContent  = d.date;
 document.getElementById('ant').textContent   = d.antenna;
 document.getElementById('tof').textContent   = d.tofText;
+document.getElementById('tof2').textContent  = d.tof2Ready ? (d.tof2Valid ? d.tof2Text : '无效（超出量程或信号弱）') : '未安装';
 document.getElementById('pitch').textContent = d.imuReady ? (d.pitch.toFixed(1) + '°') : '--';
 document.getElementById('roll').textContent  = d.imuReady ? (d.roll.toFixed(1) + '°') : '--';
 document.getElementById('link').textContent  = d.linkUp ? ('在线 ' + d.rssi + ' dBm') : '离线';
 document.getElementById('bid').textContent   = d.hasTarget ? (d.beaconId > 0 ? ('信标 ' + d.beaconId) : '老格式') : '--';
 document.getElementById('dist').textContent  = d.haveDir ? (d.distM.toFixed(0) + ' m') : '--';
-document.getElementById('dir').textContent   = d.haveDir ? (d.useRel ? d.relDirText : d.dirText) : '--';
+    document.getElementById('dir').textContent   = d.haveDir ? (d.useRel ? d.relDirText : d.dirText) : '--';
+    document.getElementById('shlink').textContent = d.shLink ? ('在线 ' + d.shRssi + ' dBm') : '离线';
+    document.getElementById('shid').textContent   = d.shHas ? (d.shId > 0 ? ('岸基 ' + d.shId) : '老格式') : '--';
+    document.getElementById('shdist').textContent = d.shHaveDir ? (d.shDist.toFixed(0) + ' m') : '--';
+    document.getElementById('shdir').textContent  = d.shHaveDir ? (d.shDirText + '方向') : '--';
 document.getElementById('hdg').textContent   = (d.magOk && d.magCal) ? (d.heading.toFixed(0) + '°') : '--';
 document.getElementById('mag').textContent   = d.magOk ? (d.magCal ? '已标定' : '未标定') : '未连接';
 document.getElementById('bdist').textContent = d.berthValid ? d.berthDistText : '--';
 document.getElementById('bspd').textContent  = d.berthActive ? (d.berthSpeed.toFixed(2) + ' m/s') : '--';
 document.getElementById('bstate').textContent = d.berthDocked ? '已靠妥'
-: (d.berthAlarm ? d.berthAlarmText
-: (d.berthActive ? '监测中' : '待机'));
+                                              : (d.berthAlarm ? d.berthAlarmText
+                                              : (d.berthActive ? '监测中' : '待机'));
+document.getElementById('bsrc').textContent = d.berthSide ? '右舷（侧靠）' : '船头（顶着靠）';
 const bb = document.getElementById('btnBuzz');
 bb.dataset.on = d.buzzOn ? '1' : '0';
 bb.textContent = '蜂鸣器：' + d.buzzState + '（点击切换）';
 bb.className = 'btn' + (d.buzzOn ? '' : ' off');
+const ba = document.getElementById('btnAck');
+ba.dataset.on = d.beaconAlarm ? '1' : '0';
+ba.textContent = d.beaconAlarm ? '确认落水告警' : '无落水告警';
+ba.className = 'btn' + (d.beaconAlarm ? ' off' : '');
 const bm = document.getElementById('btnMoor');
 bm.dataset.on = d.anchorOn ? '1' : '0';
 bm.textContent = d.anchorOn ? '清除锚泊基准' : '设锚泊基准';
@@ -316,6 +343,11 @@ tick();
 async function toggleBuzz(){
 const cur = document.getElementById('btnBuzz').dataset.on === '1';
 try { await fetch('/buzz?on=' + (cur ? '0' : '1'), {cache:'no-store'}); } catch(e) {}
+tick();
+}
+async function ackAlarm(){
+if(document.getElementById('btnAck').dataset.on !== '1') return;
+try { await fetch('/ack', {cache:'no-store'}); } catch(e) {}
 tick();
 }
 let pbData = null, pbTimer = null, pbIdx = 0;
@@ -612,6 +644,11 @@ static String buildJson() {
   j += ",\"tofValid\":";   j += (tofIsValid() ? "true" : "false");
   j += ",\"tofMm\":";      j += tofDistanceMm();
   j += ",\"tofText\":\"";  j += escapeJson(tofText()); j += "\"";
+  j += ",\"tof2Ready\":";  j += (tofSideIsReady() ? "true" : "false");
+  j += ",\"tof2Valid\":";  j += (tofSideIsValid() ? "true" : "false");
+  j += ",\"tof2Mm\":";     j += tofSideDistanceMm();
+  j += ",\"tof2Text\":\""; j += escapeJson(tofSideText()); j += "\"";
+  j += ",\"berthSide\":";  j += (berthUsingSide() ? "true" : "false");
   j += ",\"imuReady\":";   j += (imuGet().ready ? "true" : "false");
   snprintf(num, sizeof(num), "%.1f", imuGet().pitch); j += ",\"pitch\":"; j += num;
   snprintf(num, sizeof(num), "%.1f", imuGet().roll);  j += ",\"roll\":";  j += num;
@@ -630,6 +667,20 @@ static String buildJson() {
   j += ",\"useRel\":";      j += (beaconUseRel() ? "true" : "false");
   j += ",\"relDirText\":\""; j += escapeJson(String(beaconRelDirText())); j += "\"";
   snprintf(num, sizeof(num), "%.0f", beaconRelBearing()); j += ",\"relBearing\":"; j += num;
+
+  /* 岸基节点（R/A 帧）：链路、编号、位置、距本船的距离与方位 */
+  j += ",\"shLink\":";      j += (shoreLinkUp() ? "true" : "false");
+  j += ",\"shHas\":";       j += (shoreHas() ? "true" : "false");
+  j += ",\"shValid\":";     j += (shoreValid() ? "true" : "false");
+  j += ",\"shId\":";        j += shoreId();
+  j += ",\"shSeq\":";       j += (unsigned long)shoreSeq();
+  j += ",\"shRssi\":";      j += shoreRssi();
+  snprintf(num, sizeof(num), "%.1f", shoreSnr()); j += ",\"shSnr\":"; j += num;
+  snprintf(num, sizeof(num), "%.6f", shoreLat()); j += ",\"shLat\":"; j += num;
+  snprintf(num, sizeof(num), "%.6f", shoreLon()); j += ",\"shLon\":"; j += num;
+  j += ",\"shHaveDir\":";   j += (shoreHaveDir() ? "true" : "false");
+  snprintf(num, sizeof(num), "%.0f", shoreDistM()); j += ",\"shDist\":"; j += num;
+  j += ",\"shDirText\":\""; j += escapeJson(String(shoreDirText())); j += "\"";
   j += ",\"magOk\":";       j += (magPresent() ? "true" : "false");
   j += ",\"magCal\":";      j += (magCalibrated() ? "true" : "false");
   snprintf(num, sizeof(num), "%.1f", magHeadingDeg()); j += ",\"heading\":"; j += num;
@@ -808,6 +859,10 @@ void netBegin() {
   server.on("/moor", []() {
     if (server.arg("set") == "1") anchorSetReference();
     else                          anchorClearReference();
+    server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
+  });
+  server.on("/ack", []() {          // 网页上的“确认落水告警”，和串口敲 ack 等效
+    buzzerAcknowledge();
     server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
   });
   server.on("/log", handleLogCSV);

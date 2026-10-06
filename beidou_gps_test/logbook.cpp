@@ -23,6 +23,7 @@ struct LogRec {
   int32_t  lat6;       // 纬度 ×1e6
   int32_t  lon6;       // 经度 ×1e6
   uint16_t tofMm;      // 激光距离（毫米）
+  uint16_t tof2Mm;     // 右舷激光距离（毫米，0xFFFF = 无效）
   int16_t  pitch10;    // 俯仰 ×10
   int16_t  roll10;     // 横滚 ×10
   uint16_t head10;     // 航向 ×10
@@ -78,6 +79,7 @@ void logbookUpdate() {
   r.lat6     = (int32_t)lround(g.lat * 1000000.0);
   r.lon6     = (int32_t)lround(g.lon * 1000000.0);
   r.tofMm    = tofIsValid() ? tofDistanceMm() : 0xFFFF;
+  r.tof2Mm   = (tofSideIsValid() && tofSideDistanceMm() > 0) ? tofSideDistanceMm() : 0xFFFF;
   r.pitch10  = (int16_t)lround(constrain(imuGet().pitch, -300.0f, 300.0f) * 10.0f);
   r.roll10   = (int16_t)lround(constrain(imuGet().roll,  -300.0f, 300.0f) * 10.0f);
   r.head10   = (magPresent() && magCalibrated())
@@ -125,7 +127,7 @@ uint32_t logbookSpanSec() {
 
 String logbookHeader() {
   return String("t_ms,time,lat,lon,sats,hdop,fix,tof_mm,pitch,roll,heading,drift_m,"
-                "berth,anchor,link,beacon_m");
+                "berth,anchor,link,beacon_m,tof2_mm");
 }
 
 String logbookLine(uint16_t k) {
@@ -135,15 +137,17 @@ String logbookLine(uint16_t k) {
   char tm[12];
   fmtTime(r.todSec, tm, sizeof(tm));
 
-  char tof[10], head[10];
+  char tof[10], tof2[10], head[10];
   if (r.tofMm == 0xFFFF) strncpy(tof, "", sizeof(tof));
   else                   snprintf(tof, sizeof(tof), "%u", (unsigned)r.tofMm);
+  if (r.tof2Mm == 0xFFFF) strncpy(tof2, "", sizeof(tof2));
+  else                    snprintf(tof2, sizeof(tof2), "%u", (unsigned)r.tof2Mm);
   if (r.head10 == 0xFFFF) strncpy(head, "", sizeof(head));
   else                    snprintf(head, sizeof(head), "%.1f", r.head10 / 10.0);
 
-  char line[160];
+  char line[176];
   snprintf(line, sizeof(line),
-           "%lu,%s,%.6f,%.6f,%u,%.1f,%u,%s,%+.1f,%+.1f,%s,%.2f,%u,%u,%u,%u\n",
+           "%lu,%s,%.6f,%.6f,%u,%.1f,%u,%s,%+.1f,%+.1f,%s,%.2f,%u,%u,%u,%u,%s\n",
            (unsigned long)r.tMs, tm,
            r.lat6 / 1000000.0, r.lon6 / 1000000.0,
            (unsigned)r.sats, r.hdop10 / 10.0, (unsigned)r.fix,
@@ -151,7 +155,7 @@ String logbookLine(uint16_t k) {
            r.pitch10 / 10.0, r.roll10 / 10.0, head,
            r.driftCm / 100.0,
            (unsigned)r.berth, (unsigned)r.anchor, (unsigned)r.link,
-           (unsigned)r.beaconM);
+           (unsigned)r.beaconM, tof2);
   return String(line);
 }
 

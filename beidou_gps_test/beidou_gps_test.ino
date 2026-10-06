@@ -22,6 +22,7 @@
      lora_link.h / lora_link.cpp   LoRa 收发与 ACK 应答
      voice.h / voice.cpp     SYN6288 语音播报
      beacon.h / beacon.cpp   信标接收、方位解算、搜索引导
+     shore.h / shore.cpp     岸基跟踪（距岸基 / 岸基方位）
      net.h / net.cpp         WiFi 与网页服务（页面 + JSON 接口）
 
    工作流程：
@@ -44,7 +45,31 @@
 #include "lora_link.h"
 #include "voice.h"
 #include "beacon.h"
+#include "shore.h"
 #include "net.h"
+
+/* LoRa 统一轮询：收一包按帧类型分发
+     M     —— 落水信标 → beacon 模块（告警、播报、回 ACK）
+     R / A —— 岸基节点 → shore 模块（只算距离方位，不告警不播报）
+   射频没起来时每 2 秒重试初始化。
+   以前轮询在 beaconUpdate() 里，只认信标帧；加了岸基跟踪之后统一放到这里，
+   节点多了也不用到处改。                                            */
+static void loraPollAll() {
+  if (!loraIsReady()) {
+    static unsigned long lastRetry = 0;
+    if (millis() - lastRetry >= 2000) {
+      lastRetry = millis();
+      loraBegin();
+    }
+    return;
+  }
+
+  TargetPacket pkt;
+  if (!loraPoll(&pkt)) return;
+
+  if (pkt.kind == 'M') beaconOnPacket(pkt);   // 信标
+  else                 shoreOnPacket(pkt);    // 岸基（R 或 A）
+}
 
 void setup() {
   Serial.begin(DBG_BAUD);
@@ -91,14 +116,24 @@ void loop() {
   imuUpdate();         // 读姿态（50Hz）
   magUpdate();         // 读磁力计、算航向（内部按速率自己节流）
   berthUpdate();       // 靠泊判断（距离滤波、速度拟合、分级告警、播报）
-  beaconUpdate();      // 收信标、算方位、按需播报、判断链路超时
+  loraPollAll();       // 收一包 LoRa，按帧类型分发给信标 / 岸基
+  beaconUpdate();      // 信标：算方位、按需播报、判断链路超时
+  shoreUpdate();       // 岸基：刷新距离方位、判断链路超时
 
-  // 每 2 秒广播一次本船状态，岸基节点靠它掌握船的位置（ID 为 DEV_ID）
+  /* 本船状态广播（给岸基节点收，ID 为 DEV_ID）。
+     信标在线时必须让路：只挑「刚给信标回完 ACK」的那段空档发，
+     否则本机一发射就听不见东西，会把信标的 SOS 包顶掉、逼它重传。 */
   static unsigned long lastBc = 0;
   if (millis() - lastBc >= BROADCAST_MS) {
-    lastBc = millis();
-    const GpsStatus& g = gpsGet();
-    loraSendShipStatus(g.valid, g.lat, g.lon, g.speedKmh / 1.852f, g.course, g.satsUsed);
+    uint32_t age     = beaconLastPacketAgeMs();
+    bool     beaconOn = (age <= BROADCAST_QUIET_MS);       // 从未收到过时 age=0xFFFFFFFF，这里为 false
+    bool     inSlot   = !beaconOn ||
+                        (age >= BROADCAST_SLOT_MIN_MS && age <= BROADCAST_SLOT_MAX_MS);
+    if (inSlot) {
+      lastBc = millis();
+      const GpsStatus& g = gpsGet();
+      loraSendShipStatus(g.valid, g.lat, g.lon, g.speedKmh / 1.852f, g.course, g.satsUsed);
+    }
   }
 
   anchorUpdate();      // 锚泊位移监测（用网页“设基准”启动）
@@ -118,5 +153,6 @@ void loop() {
     anchorPrintReport();
     logbookPrintStatus();
     beaconPrintReport();
+    shorePrintReport();
   }
 }

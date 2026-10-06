@@ -31,9 +31,28 @@ static const int TOF_SCL_PIN = 22;
 #define TOF_LONG_RANGE 1        // 1 = 远距模式（最远约 4 米），0 = 短距
 #define TOF_READ_MS    50       // 读取间隔（毫秒）
 
+/* ---------------- 第二只激光测距 VL53L1X（装在右舷） ----------------
+   装船侧、朝正侧方：船横过来贴码头时，测的是"船到码头"的横向距离，
+   这才是真实船舶靠泊的方式（侧靠）。
+
+   两只 VL53L1X 出厂地址都是 0x29，直接并到同一条总线上会互相打架，
+   所以接法和第一只不一样，多一根 XSHUT 线：
+
+     VIN -> 3.3V（切勿接 5V）   GND -> GND
+     SDA -> GPIO21（和第一只并联）  SCL -> GPIO22（和第一只并联）
+     XSHUT -> GPIO32          ← 就这一根是新的
+
+   上电顺序（写死在 tofBegin 里，不要改）：
+     按住右舷那只 -> 船头那只拿到 0x29 -> 把它改到 0x2A -> 放开右舷那只
+   这样两只地址就分开了，各自都能读。                                   */
+#define TOF_SIDE_ENABLE 1                // 0 = 没接第二只（退回单路，省代码）
+static const int     TOF2_XSHUT_PIN = 32;
+static const uint8_t TOF_ADDR_BOW   = 0x2A;   // 船头那只改到 0x2A，把 0x29 让给右舷那只
+
 /* ---------------- OLED 显示屏（SSD1306 128x64，I2C） ----------------
-   和激光测距共用一条 I2C 总线：VL53L1X = 0x29，SSD1306 = 0x3C，
-   地址不同，挂在一起互不冲突。
+   和两只激光测距、MPU6050 共用一条 I2C 总线（21/22）：
+   VL53L1X 右舷 = 0x29、VL53L1X 船头 = 0x2A、SSD1306 = 0x3C、MPU6050 = 0x68，
+   地址各不相同，挂在一起互不冲突。
    VCC -> 3.3V   GND -> GND   SDA -> GPIO21   SCL -> GPIO22          */
 static const int      OLED_SDA_PIN    = 21;
 static const int      OLED_SCL_PIN    = 22;
@@ -41,7 +60,7 @@ static const uint8_t  OLED_ADDR       = 0x3C;   // 少数模块是 0x3D，读不
 static const uint32_t OLED_REFRESH_MS = 250;    // 两次刷屏的最短间隔
 
 /* ---------------- MPU6050 六轴姿态（I2C） ----------------
-   和激光、OLED 共用一条 I2C 总线：0x29 / 0x3C / 0x68 三个地址互不冲突。
+   和两只激光、OLED 共用一条 I2C 总线：0x29 / 0x2A / 0x3C / 0x68 四个地址互不冲突。
    VCC -> 3.3V   GND -> GND   SDA -> GPIO21   SCL -> GPIO22
    AD0 -> GND 或不接（地址 0x68）；AD0 接高电平则变成 0x69。
    ⚠ MPU6050 没有磁力计：俯仰和横滚准，偏航会随时间漂。          */
@@ -88,6 +107,16 @@ static const uint32_t IMU_READ_MS = 20;         // 读取间隔（50Hz，对应�
    靠近到 BERTH_ENTER_M 以内自动开始监测，退出时用 BERTH_EXIT_M 做滞回。
    阈值按文档附录 B 的告警码取值，实测觉得太敏感或太迟钝就改这里。        */
 #define BERTH_ENABLE 1
+
+/* 靠泊判断用哪一路激光：
+     0 = 自动（推荐）：右舷那只有效且进了靠泊区就用右舷，否则用船头
+     1 = 固定用船头（顶着靠）
+     2 = 固定用右舷（侧靠）
+   自动模式的意义在于：顶着靠和侧靠两种演示都不用改代码。            */
+#define BERTH_SRC_AUTO 0
+#define BERTH_SRC_BOW  1
+#define BERTH_SRC_SIDE 2
+#define BERTH_SRC_MODE BERTH_SRC_AUTO
 
 static const float BERTH_ENTER_M     = 3.5f;    // 进入监测的距离（激光量程 4 米，留余量）
 static const float BERTH_EXIT_M      = 3.8f;    // 退出监测的距离（滞回 0.3 米）
@@ -155,7 +184,21 @@ static const int  RF_SYNC = 0x12;
    岸基节点靠它区分"这一帧是谁发的"。
    船端每 BROADCAST_MS 主动广播一帧自己的状态，岸基才有东西可收。      */
 #define DEV_ID        1
-#define BROADCAST_MS  2000UL
+/* 船端对岸基节点的广播节奏。
+   原来固定 2 秒一帧，和信标 2 秒一次的 SOS 上报正好同拍；而发射时本机是收不到
+   东西的（半双工），会把信标的包顶掉、逼它重传。
+   现在分两种情况：
+     · 信标不在线（超过 BROADCAST_QUIET_MS 没收到包）：每 BROADCAST_MS 发一帧
+     · 信标在线：只挑「刚给信标回完 ACK、信标正处在自己那 2 秒静默期」的空档发，
+       所以实际间隔约为 BROADCAST_MS 的 1~2 倍，永远不会压住 SOS            */
+#define BROADCAST_MS          5000UL   // 两次广播最短间隔
+/* 下面两个数字按空口时间算出来的，别乱改：
+   SF10/BW125k 下一帧约 0.6~0.9 秒，本机回给信标的 ACK 大约在收包后 0.62 秒发完，
+   信标下一帧在收包后约 3.2 秒才来。所以广播窗口取 0.8~1.6 秒最稳：
+   既等 ACK 发完，又能在信标下一帧之前把 0.9 秒的广播发完。                   */
+#define BROADCAST_SLOT_MIN_MS 800UL    // 收到信标包后至少等这么久（先让 ACK 发完）
+#define BROADCAST_SLOT_MAX_MS 1600UL   // 超过这么久就不发，等下一个空档
+#define BROADCAST_QUIET_MS    20000UL  // 这么久没收到信标，就按「信标不在线」处理
 
 /* ---------------- SYN6288 语音模块（UART2） ----------------
    模块 RXD <- GPIO16（必接）  TXD -> GPIO4（可选）  VCC -> 5V      */
@@ -166,6 +209,7 @@ static const uint8_t  SYN_VOLUME = 16;
 
 /* ---------------- 播报节奏 ---------------- */
 static const uint32_t LINK_LOST_MS        = 15000;  // 超时未收信标就播报失去联系
+static const uint32_t SHORE_LOST_MS       = 15000;  // 超时未收岸基帧就算岸基离线（不播报）
 static const uint32_t ANNOUNCE_MIN_GAP_MS = 8000;   // 两次播报最短间隔，避免语音排队
 static const uint32_t ANNOUNCE_MAX_MS     = 20000;  // 坐标没变也最多 20 秒重播一次
 static const float    ANNOUNCE_MIN_MOVE_M = 3.0f;   // 目标移动超过 3 米就重播

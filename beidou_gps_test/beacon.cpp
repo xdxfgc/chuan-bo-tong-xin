@@ -87,7 +87,6 @@ static double        s_annLat = 0.0, s_annLon = 0.0;
 static unsigned long s_lastAnnounceMs = 0;
 static bool          s_lastHaveDir    = false;
 
-static unsigned long s_lastLoraRetryMs = 0;
 
 /* 编号文字：信标用 11/12/13……，本板是 1；老格式帧不带编号，显示 “--” */
 static char s_idText[8] = "--";
@@ -154,8 +153,8 @@ static void maybeAnnounce() {
   s_lastAnnounceMs = millis();
 }
 
-// 收到一包信标数据
-static void onPacket(const TargetPacket& pkt) {
+// 收到一包信标数据（由主程序按帧类型分发过来）
+void beaconOnPacket(const TargetPacket& pkt) {
   bool wasDown = !s_linkUp;
 
   s_lastPacketMs = millis();
@@ -215,17 +214,8 @@ void beaconBegin() {
 }
 
 void beaconUpdate() {
-  // LoRa：射频没起来就每 2 秒重试，起来了就收包
-  if (!loraIsReady()) {
-    if (millis() - s_lastLoraRetryMs >= 2000) {
-      s_lastLoraRetryMs = millis();
-      loraBegin();
-    }
-  } else {
-    TargetPacket pkt;
-    if (loraPoll(&pkt)) onPacket(pkt);
-  }
-
+  /* 收包的活儿已经挪到主程序的 loraPollAll() 里统一分发（信标 M 帧给这里，
+     岸基 R/A 帧给 shore 模块），这里只管信标自己的超时判断。          */
   // 链路超时：这里必须重新读一次 millis()。刚收到的包会把 s_lastPacketMs
   // 设成「比本轮 now 还新」的时刻，用旧值相减会变成无符号下溢，刚收到包就被误判。
   if (s_linkUp && (millis() - s_lastPacketMs > LINK_LOST_MS)) {
@@ -263,6 +253,14 @@ void beaconPrintReport() {
 }
 
 bool        beaconLinkUp()      { return s_linkUp; }
+
+/* 给「船端对外广播」让路用的：本机刚收完信标包之后的一小段时间里，
+   信标正在等应答、然后进入它自己的静默期，这时候发广播最不容易撞。 */
+uint32_t    beaconLastPacketAgeMs() {
+  if (!s_everLinked) return 0xFFFFFFFFu;
+  return (uint32_t)(millis() - s_lastPacketMs);
+}
+
 bool        beaconHasTarget()   { return s_hasTarget; }
 bool        beaconTargetValid() { return s_targetValid; }
 uint32_t    beaconSeq()         { return s_targetSeq; }

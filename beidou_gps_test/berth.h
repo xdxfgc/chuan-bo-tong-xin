@@ -20,6 +20,7 @@ void berthUpdate();              // 周期调用：采样、滤波、判断、�
 bool     berthActive();          // 是否正在靠泊监测中
 bool     berthDocked();          // 是否已判定靠妥
 bool     berthValid();           // 当前距离是否有效
+bool     berthUsingSide();       // 当前靠泊判断用的是不是右舷那一路
 float    berthDistanceM();       // 滤波后的距离（米）
 float    berthSpeedMps();        // 接近速度（米每秒，正数=正在靠近）
 uint8_t  berthAlarmCode();       // 0x00 无 / 0x01 / 0x02 / 0x03

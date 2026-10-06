@@ -183,7 +183,7 @@ static void renderBerth() {
   uint8_t a = berthAlarmCode();
 
   /* 第 1 行：标题 + 等级 */
-  drawCN(0, 11, "靠泊监测");
+  drawCN(0, 11, berthUsingSide() ? "靠泊·右舷" : "靠泊·船头");
   if (berthDocked())               drawCN(96, 11, "已靠妥");
   else if (a == 0x02 || a == 0x03) drawCN(96, 11, "严重");
   else if (a == 0x01)              drawCN(96, 11, "提醒");

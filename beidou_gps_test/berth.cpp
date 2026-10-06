@@ -38,6 +38,7 @@ static bool     s_valid     = false;
 
 static bool     s_active    = false;   // 在靠泊监测中
 static bool     s_docked    = false;   // 已靠妥
+static bool     s_useSide   = false;   // 当前用的是不是右舷那一路
 static uint8_t  s_alarm     = 0x00;
 static uint8_t  s_candCode  = 0x00;    // 去抖：候选告警码
 static uint8_t  s_candCnt   = 0;
@@ -178,6 +179,28 @@ static void berthEnd(const char* why) {
   Serial.printf("[靠泊] 监测结束（%s）\n", why);
 }
 
+/* ---------------- 选哪一路当靠泊依据 ----------------
+   真实船舶靠泊是"侧靠"——船横过来贴码头，所以右舷那只能测到"船到码头"
+   的横向距离，比船头那只更贴近真实场景。
+   但船头那只也不能废：顶着靠的时候只有它看得见岸。
+   所以默认自动选：右舷进到靠泊区就用右舷，否则退回船头。
+   退回时用退出阈值做滞回，免得两个距离在 3.5 米附近来回跳、
+   每跳一次就重开一次监测。                                            */
+static bool pickSideSource() {
+#if !TOF_SIDE_ENABLE
+  return false;                                     // 没装第二只
+#elif BERTH_SRC_MODE == BERTH_SRC_SIDE
+  return (tofSideIsValid() && tofSideDistanceMm() > 0);
+#elif BERTH_SRC_MODE == BERTH_SRC_BOW
+  return false;                                     // 固定用船头
+#else
+  if (!tofSideIsReady()) return false;
+  if (!tofSideIsValid() || tofSideDistanceMm() == 0) return false;
+  float d = (float)tofSideDistanceMm() / 1000.0f;
+  return s_useSide ? (d <= BERTH_EXIT_M) : (d <= BERTH_ENTER_M);
+#endif
+}
+
 /* ---------------- 对外接口 ---------------- */
 
 void berthBegin() {
@@ -186,7 +209,8 @@ void berthBegin() {
   s_docked = false;
   s_alarm  = 0x00;
   s_lastValidMs = millis();
-  Serial.println("靠泊辅助已就绪：靠近到 3.5 米自动开始监测。");
+  Serial.println("靠泊辅助已就绪：右舷优先（侧靠），看不到岸时自动用船头，"
+                 "靠近到 3.5 米开始监测。");
 }
 
 void berthUpdate() {
@@ -194,10 +218,19 @@ void berthUpdate() {
   if (now - s_lastSampleMs < TOF_READ_MS) return;
   s_lastSampleMs = now;
 
-  s_valid = tofIsValid();
+  /* ---- 选数据源：右舷优先（侧靠），看不到岸就退回船头 ---- */
+  bool useSide = pickSideSource();
+
+  /* 中途换源说明"岸"从船头换到了船侧（或者反过来）。两路的基准不一样，
+     硬接着算会把速度拟合顶出一个假尖峰，所以直接结束本次监测，
+     当成一个新事件重新进入。 */
+  if (s_active && useSide != s_useSide) berthEnd("测距源切换");
+  s_useSide = useSide;
+
+  s_valid = useSide ? tofSideIsValid() : tofIsValid();
 
   if (s_valid) {
-    float raw = (float)tofDistanceMm() / 1000.0f;
+    float raw = (float)(useSide ? tofSideDistanceMm() : tofDistanceMm()) / 1000.0f;
 
     // 1) 3 点中值：去野值
     s_med[s_medIdx] = raw;
@@ -311,6 +344,7 @@ void berthUpdate() {
 bool  berthActive()   { return s_active; }
 bool  berthDocked()   { return s_docked; }
 bool  berthValid()    { return s_valid; }
+bool  berthUsingSide(){ return s_useSide; }
 bool  berthShowOnScreen() {
   if (!s_active) return false;
   if (s_alarm != 0x00) return true;             // 有告警一定要显示
@@ -339,15 +373,16 @@ String berthDistanceText() {
 }
 
 void berthPrintReport() {
+  const char* src = s_useSide ? "右舷" : "船头";
   if (!s_active) {
     if (s_valid && s_dist > 0.0f)
-      Serial.printf("靠泊     : 待机（距岸 %s）\n", berthDistanceText().c_str());
+      Serial.printf("靠泊(%s) : 待机（距岸 %s）\n", src, berthDistanceText().c_str());
     else
-      Serial.println("靠泊     : 待机");
+      Serial.printf("靠泊(%s) : 待机\n", src);
     return;
   }
-  Serial.printf("靠泊     : %s  接近速度 %.3f m/s  告警 %s%s\n",
-                berthDistanceText().c_str(), s_speed, berthAlarmText().c_str(),
+  Serial.printf("靠泊(%s) : %s  接近速度 %.3f m/s  告警 %s%s\n",
+                src, berthDistanceText().c_str(), s_speed, berthAlarmText().c_str(),
                 s_docked ? "  [已靠妥]" : "");
 }
 
@@ -358,6 +393,7 @@ void berthUpdate() {}
 bool berthActive() { return false; }
 bool berthDocked() { return false; }
 bool berthValid()  { return false; }
+bool berthUsingSide() { return false; }
 bool berthShowOnScreen() { return false; }
 float berthDistanceM() { return -1.0f; }
 float berthSpeedMps()  { return 0.0f; }
