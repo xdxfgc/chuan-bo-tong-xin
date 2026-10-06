@@ -93,11 +93,19 @@ void loop() {
 
   coordPoll();                // 模式 2/3 需要读串口
 
+  /* 水感状态：**连续湿够 WATER_CONFIRM_MS 才算 1**，碰一下就抖开的不算。
+     这个位跟着每一帧发出去，船端看它决定要不要报警 ——
+     所以信标可以一直发（链路随时在线），但船端只在真的入水时才响。 */
+  bool wet = waterIsWet() && (waterWetMs() >= WATER_CONFIRM_MS);
+
   char payload[32];
   coordBuildPayload(payload, sizeof(payload));   // 组出 P,<有效>,<纬度>,<经度>
 
-  char tx[64];
-  snprintf(tx, sizeof(tx), "M,%d,%lu,%s", DEV_ID, (unsigned long)seq, payload);
+  /* 帧格式：M,<信标ID>,<序号>,P,<定位有效>,<纬度>,<经度>,<水感 0/1>
+     最后那个字段是新加的；老固件的船端读到多余字段会自动忽略，不受影响。 */
+  char tx[72];
+  snprintf(tx, sizeof(tx), "M,%d,%lu,%s,%d",
+           DEV_ID, (unsigned long)seq, payload, wet ? 1 : 0);
 
   DBG.printf("[第 %lu 轮] 发出 %s\n", (unsigned long)seq, tx);
 
@@ -109,5 +117,16 @@ void loop() {
 
   seq++;
   linkPrintStats();
-  delay(ROUND_PERIOD_MS);
+
+  /* 平时慢发、入水快发。
+     正常值守 8 秒一帧，占空比约 6%；入水后 2 秒一帧，占空比约 21%。
+     一眼就能在串口上看出现在是哪一档。                              */
+  static bool lastWet = false;
+  if (wet != lastWet) {
+    lastWet = wet;
+    DBG.printf("[节奏] 切到%s：每 %lu ms 发一帧\n",
+               wet ? "入水快发" : "值守慢发",
+               (unsigned long)(wet ? ROUND_PERIOD_MS : IDLE_HEARTBEAT_MS));
+  }
+  delay(wet ? ROUND_PERIOD_MS : IDLE_HEARTBEAT_MS);
 }

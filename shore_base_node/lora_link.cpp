@@ -122,28 +122,39 @@ static bool parsePacketString(const String& s, LoraPacket* out) {
   }
   payload.trim();
 
-  /* 载荷统一是 "<P或C>,<定位有效>,<纬度>,<经度>[,对地速度节,航向度,卫星数]"
-     前面四个字段三种帧都有；后面三个只有船端的 S 帧才带。
-     所以一次把六个都试着读出来，读够几个算几个：
-       信标帧  -> 读到 3 个（fix/纬度/经度）
-       船端帧  -> 读到 6 个，多的三个填进 hasExtra/sogKnots/cogDeg/sats
-     这样以后协议再加字段也不会把这一端弄坏。                        */
-  int    fix = 0, sats = 0;
+  /* 前四个字段三种帧都有：<标签>, <定位有效>, <纬度>, <经度>
+     第 5 个字段起，**信标帧和船端帧的意思不一样**，所以要按 kind 分开读：
+         信标帧：,<水感 0/1>
+         船端帧：,<对地速度节>,<航向度>,<卫星数>
+     分开读还有个好处：船端的速度是小数（0.00），用 %d 读会被截断，
+     混在一个 sscanf 里会读错。                                      */
+  int    fix = 0;
   double la = 0, lo = 0;
-  float  sog = 0.0f, cog = 0.0f;
 
-  int got = sscanf(payload.c_str(), "%*[^,],%d,%lf,%lf,%f,%f,%d",
-                   &fix, &la, &lo, &sog, &cog, &sats);
-  if (got < 3) {                             // 兼容不带标签的 "纬度,经度"
-    got = sscanf(payload.c_str(), "%d,%lf,%lf,%f,%f,%d",
-                 &fix, &la, &lo, &sog, &cog, &sats);
-    if (got < 3) return false;
-  }
-  if (got >= 6) {                            // 船端帧：把附加字段带上
-    out->hasExtra = true;
-    out->sogKnots = sog;
-    out->cogDeg   = cog;
-    out->sats     = sats;
+  if (out->kind == LK_BEACON) {
+    int water = 0;
+    int got = sscanf(payload.c_str(), "%*[^,],%d,%lf,%lf,%d", &fix, &la, &lo, &water);
+    if (got < 3) {
+      fix = 1;
+      if (sscanf(payload.c_str(), "%lf,%lf", &la, &lo) < 2) return false;
+    } else if (got >= 4) {
+      out->hasWater = true;
+      out->waterOn  = (water != 0);
+    }
+  } else {
+    float sog = 0.0f, cog = 0.0f;
+    int   sats = 0;
+    int got = sscanf(payload.c_str(), "%*[^,],%d,%lf,%lf,%f,%f,%d",
+                     &fix, &la, &lo, &sog, &cog, &sats);
+    if (got < 3) {
+      fix = 1;
+      if (sscanf(payload.c_str(), "%lf,%lf", &la, &lo) < 2) return false;
+    } else if (got >= 6) {
+      out->hasExtra = true;
+      out->sogKnots = sog;
+      out->cogDeg   = cog;
+      out->sats     = sats;
+    }
   }
 
   // 越界或 (0,0) 一律当作无效

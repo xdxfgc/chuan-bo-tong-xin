@@ -131,13 +131,22 @@ static bool parsePacketString(const String& s, TargetPacket* out) {
   payload.trim();
 
   /* 载荷统一是 "<P或C>,<定位有效>,<纬度>,<经度>[,多余字段…]"
-     岸基的帧没有多余字段；这里用 sscanf 读够前三个，多余的自动忽略，
+     信标帧后面多一个"水感 0/1"；岸基的 R/A 帧没有。
+     所以一次把四个都试着读出来，读够几个算几个：
+       岸基帧  -> 读到 3 个
+       信标帧  -> 读到 4 个，最后一个填进 hasWater/waterOn
      以后协议再加字段也不会把这一端弄坏。                              */
-  int    fix = 0;
+  int    fix = 0, water = 0;
   double la = 0, lo = 0;
-  if (sscanf(payload.c_str(), "%*[^,],%d,%lf,%lf", &fix, &la, &lo) != 3) {
-    fix = 1;                                 // 兼容不带标签的 "纬度,经度"
-    if (sscanf(payload.c_str(), "%lf,%lf", &la, &lo) != 2) return false;
+  int got = sscanf(payload.c_str(), "%*[^,],%d,%lf,%lf,%d",
+                   &fix, &la, &lo, &water);
+  if (got < 3) {                             // 兼容不带标签的 "纬度,经度"
+    fix = 1;
+    got = sscanf(payload.c_str(), "%lf,%lf", &la, &lo);
+    if (got < 2) return false;
+  } else if (got >= 4) {
+    out->hasWater = true;
+    out->waterOn  = (water != 0);
   }
 
   // 越界或 (0,0) 一律当作无效

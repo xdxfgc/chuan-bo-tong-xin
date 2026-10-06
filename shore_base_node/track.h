@@ -33,6 +33,12 @@ struct TrackTarget {
   float         cogDeg    = 0.0f;   // 对地航向（度）
   int           sats      = 0;      // 参与定位的卫星数
 
+  /* 信标的水感电极是否确认导通。
+     信标现在一直发（链路随时在线），靠这个位区分"真入水"和"正常值守"，
+     不然岸基平时也会一直报落水。老格式帧没这个字段，按"有水"处理。    */
+  bool          hasWater  = false;
+  bool          waterOn   = false;
+
   bool          haveDir   = false;   // 本节点已定位且对方坐标有效
   float         distM     = 0.0f;
   float         bearing   = 0.0f;

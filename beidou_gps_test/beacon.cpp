@@ -68,6 +68,7 @@ static bool          s_hasTarget     = false;
 static bool          s_targetValid   = false;
 static uint32_t      s_targetSeq     = 0;
 static int           s_targetId      = 0;      // 0 = 老格式帧没带编号
+static bool          s_targetWater   = false;  // 信标的水感电极是否确认导通
 static double        s_tLat = 0.0, s_tLon = 0.0;
 static int           s_rssi = 0;
 static float         s_snr  = 0.0f;
@@ -176,6 +177,8 @@ void beaconOnPacket(const TargetPacket& pkt) {
   s_targetSeq   = pkt.seq;
   s_targetId    = pkt.srcId;
   updateIdText(pkt.srcId);
+  // 老格式帧没有水感字段，当作"有水"，退回原来的报警行为
+  s_targetWater = pkt.hasWater ? pkt.waterOn : true;
   s_tLat        = pkt.lat;
   s_tLon        = pkt.lon;
   s_rssi        = pkt.rssi;
@@ -189,12 +192,21 @@ void beaconOnPacket(const TargetPacket& pkt) {
 
   refreshGeo();
 
-  if (s_targetValid) {
-    // 落水告警：收到有效坐标就置位，直到人工确认；确认后同一个事件不再重复触发
+  /* 报警条件 = 坐标有效 + 水感确认导通。
+
+     为什么不能只看"收到坐标"：信标现在**一直发**（链路随时在线，方便联调），
+     如果收到就报警，那平时它也会一直响。真正的触发条件是帧里那个水感位。
+
+     兼容老格式：老固件的信标帧没有水感字段（hasWater = false），
+     这时退回原来的行为——收到有效坐标就报警。 */
+  bool waterAlarm = s_targetValid && (!pkt.hasWater || pkt.waterOn);
+
+  if (waterAlarm) {
+    // 落水告警：置位后保持，直到人工确认；确认后同一个事件不再重复触发
     if (!s_acked) s_alarmActive = true;
     s_reportedNoFix = false;
     maybeAnnounce();
-  } else if (!s_reportedNoFix) {
+  } else if (!s_targetValid && !s_reportedNoFix) {
     s_reportedNoFix = true;
     voiceSpeakTargetNoPos();
   }
@@ -232,6 +244,9 @@ void beaconPrintReport() {
                 s_linkUp ? "在线" : "离线", s_rssi, s_snr);
   if (s_hasTarget) {
     Serial.printf("信标编号 : %s（-- 表示老格式帧没带编号）\n", s_idText);
+    Serial.printf("水感     : %s%s\n",
+                  s_targetWater ? "导通（已确认入水）" : "未导通（正常值守）",
+                  s_alarmActive ? "   ← 落水告警中" : "");
     Serial.printf("信标位置 : %s  #%lu  %.6f, %.6f\n",
                   s_targetValid ? "有效" : "未定位",
                   (unsigned long)s_targetSeq, s_tLat, s_tLon);

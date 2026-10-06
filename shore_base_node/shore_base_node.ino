@@ -57,10 +57,16 @@ static void loraPollAll() {
 
   trackOnPacket(pkt);
 
-  if (pkt.kind == LK_BEACON) {                // 只有信标要 ACK，船端不用
-    const GpsStatus& g = gpsGet();
-    loraSendAck((int)pkt.seq, g.valid, g.lat, g.lon);
-  }
+  /* 这里**故意不回 ACK**。
+
+     三端同时工作时，信标发一帧会被【船端和岸基同时收到】。如果两边都回 ACK，
+     两个 ACK 几乎同时发出、完全重叠，LoRa 一般两个都解不出来 ——
+     信标就永远收不到应答，一直重发。
+
+     所以约定：**只有船端回 ACK，岸基只听**。
+     岸基的角色是"参考站 + 接收告警"，回不回 ACK 完全不影响它的功能。
+
+     代价：船端不在场时，信标每轮会重发 3 次（浪费一点信道，功能不受影响）。 */
 }
 
 /* 定时广播本节点参考站位置（R 帧），船端收到后显示“距岸基 / 岸基方位”。

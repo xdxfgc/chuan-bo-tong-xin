@@ -223,6 +223,10 @@ void trackOnPacket(const LoraPacket& pkt) {
   t.rssi  = pkt.rssi;
   t.snr   = pkt.snr;
 
+  // 水感：老格式帧没这个字段，当作"有水"，退回原来的报警行为
+  t.hasWater = pkt.hasWater;
+  t.waterOn  = pkt.hasWater ? pkt.waterOn : true;
+
   Serial.printf("[信标 %d] 收到 #%lu  定位=%s  %.6f, %.6f  RSSI=%d dBm  SNR=%.1f dB\n",
                 pkt.srcId, (unsigned long)pkt.seq,
                 pkt.valid ? "有效" : "无效", pkt.lat, pkt.lon, pkt.rssi, pkt.snr);
@@ -230,10 +234,16 @@ void trackOnPacket(const LoraPacket& pkt) {
   refreshGeo(t);
 
   if (wasDown && a.announced && !s_acked) voiceSpeakLinkBack();
-  if (t.valid) {
+
+  /* 报警条件 = 坐标有效 + 水感确认导通。
+     信标现在一直发（链路随时在线），光看"收到坐标"会一直响；
+     真正的触发条件是帧里那个水感位。老格式帧没这个字段，退回原行为。 */
+  bool waterAlarm = t.valid && t.waterOn;
+
+  if (waterAlarm) {
     a.reportedNoFix = false;
     maybeAnnounceBeacon(slot);
-  } else if (!a.reportedNoFix) {
+  } else if (!t.valid && !a.reportedNoFix) {
     a.reportedNoFix = true;
     if (!s_acked) voiceSpeakTargetNoPos();
   }
