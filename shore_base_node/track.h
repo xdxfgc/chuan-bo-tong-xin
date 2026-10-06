@@ -45,4 +45,10 @@ const TrackTarget& trackBeaconAt(int i);     // 第 i 只（0 ≤ i < count）
 
 const char*        trackDirText(const TrackTarget& t);   // 方位文字，如“东北”
 
+/* 人工确认告警：确认之后停止重复播报（落水、失联、恢复都不再念），
+   但网页和屏上的显示照旧。等有新信标上线（从离线变在线）会自动重新允许播报，
+   免得值班员确认过一次之后，后面真的又出事就不响了。                 */
+void trackAcknowledge();
+bool trackAcked();
+
 #endif

@@ -58,6 +58,18 @@ static const char INDEX_HTML[] = R"HTML(
        background:#1a232e;color:var(--dim);font-size:14px;cursor:pointer}
   .tab.on{background:#173148;border-color:var(--accent);color:var(--txt);font-weight:600}
   .pane{display:none}
+  .btn{padding:9px 16px;border-radius:10px;border:1px solid var(--line);
+       background:#1a232e;color:var(--txt);font-size:14px;cursor:pointer;
+       font-family:inherit;margin:0 8px 12px 0}
+  .btn.off{background:#22303c;color:var(--dim)}
+  table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;
+            font-variant-numeric:tabular-nums}
+  table.tbl th{text-align:left;color:var(--dim);font-weight:600;font-size:12px;
+               padding:6px 8px;border-bottom:1px solid var(--line)}
+  table.tbl td{padding:7px 8px;border-bottom:1px solid #1e2833}
+  table.tbl td.ok{color:#7ee2a8}
+  table.tbl td.bad{color:#ff9b9b}
+  table.tbl td.empty{color:var(--dim);text-align:center}
 </style>
 </head>
 <body>
@@ -106,6 +118,18 @@ static const char INDEX_HTML[] = R"HTML(
     <div class="card"><div class="k">信标方位</div><div class="v" id="bdir">--</div></div>
     <div class="card"><div class="k">信号（RSSI / SNR）</div><div class="v small" id="bsig">--</div></div>
   </div>
+  <div>
+    <button class="btn" id="btnAck" onclick="doAck()">确认告警（静音语音播报）</button>
+  </div>
+  <h2>信标列表（按编号）</h2>
+  <table class="tbl">
+    <thead><tr>
+      <th>编号</th><th>链路</th><th>定位</th><th>坐标</th>
+      <th>距岸基</th><th>方位</th><th>RSSI</th>
+    </tr></thead>
+    <tbody id="btable"><tr><td class="empty" colspan="7">还没收到信标数据</td></tr></tbody>
+  </table>
+  <p class="sub">多只信标同时落水时这里会各占一行；顶部横幅按最紧急的那只提示。</p>
   <p class="sub">收到信标 M 帧时本节点会回 ACK，岸端同样具备落水接收能力。</p>
   </section>
 
@@ -139,9 +163,17 @@ async function tick(){
   try{
     const d = await (await fetch('/data',{cache:'no-store'})).json();
     const b = document.getElementById('banner');
-    if(d.bLink && d.bValid){
+    /* 只要信标在线就报警 —— 不能等"定位有效"才报。
+       信标刚落水时北斗还没定上位（冷启动要 30~60 秒），
+       那半分钟恰恰是最该让人知道的时刻。 */
+    if(d.bLink){
       b.className='banner bad';
-      b.textContent='检测到落水信标 · ' + (d.bHaveDir ? (d.bDirText + '方向 约 ' + d.bDist.toFixed(0) + ' 米') : '坐标有效');
+      var t = '检测到落水信标';
+      if(d.bValid && d.bHaveDir)  t += ' · ' + d.bDirText + '方向 约 ' + d.bDist.toFixed(0) + ' 米';
+      else if(d.bValid)           t += ' · 坐标有效（本节点还没定位，算不出方位）';
+      else                        t += ' · 定位尚未获取，正在搜星';
+      if(d.bCount > 1)            t += '（共 ' + d.bCount + ' 只在线）';
+      b.textContent = t;
     } else if(d.vLink){
       b.className='banner ok';
       b.textContent='与船端链路在线' + (d.vHaveDir ? (' · 船端在' + d.vDirText + '方向 约 ' + d.vDist.toFixed(0) + ' 米') : '');
@@ -176,6 +208,30 @@ async function tick(){
     document.getElementById('bdir').textContent   = d.bHaveDir ? (d.bDirText+'方向') : '--';
     document.getElementById('bsig').textContent   = d.bHas ? (d.bRssi + ' dBm / ' + d.bSnr.toFixed(1) + ' dB') : '--';
 
+    /* 信标列表：后端按编号分槽位，多只信标同时落水也能各占一行 */
+    const tb = document.getElementById('btable');
+    if(d.bs && d.bs.length){
+      tb.innerHTML = d.bs.map(function(x){
+        const pos  = (x.has && x.valid) ? (x.lat.toFixed(5) + ', ' + x.lon.toFixed(5)) : '--';
+        const dist = x.haveDir ? (x.dist.toFixed(0) + ' m') : '--';
+        const dir  = x.haveDir ? x.dirText : '--';
+        const st   = x.has ? (x.valid ? '有效' : '未定位') : '未收到';
+        return '<tr>' +
+          '<td>' + (x.id > 0 ? ('信标 ' + x.id) : '老格式') + '</td>' +
+          '<td class="' + (x.link ? 'ok' : 'bad') + '">' + (x.link ? '在线' : '离线') + '</td>' +
+          '<td>' + st + '</td><td>' + pos + '</td>' +
+          '<td>' + dist + '</td><td>' + dir + '</td>' +
+          '<td>' + x.rssi + ' dBm</td></tr>';
+      }).join('');
+    } else {
+      tb.innerHTML = '<tr><td class="empty" colspan="7">还没收到信标数据</td></tr>';
+    }
+
+    /* 确认按钮：确认之后停止重复播报；有新信标上线会自动恢复 */
+    const ab = document.getElementById('btnAck');
+    ab.textContent = d.acked ? '告警已确认（有新信标上线会重新报警）' : '确认告警（静音语音播报）';
+    ab.className   = 'btn' + (d.acked ? ' off' : '');
+
     document.getElementById('vlink').textContent  = d.vLink ? ('在线 ' + d.vRssi + ' dBm') : '离线';
     document.getElementById('vstate').textContent = d.vHas ? (d.vValid ? '定位有效' : '未定位') : '未收到';
     document.getElementById('vseq').textContent   = d.vHas ? ('#' + d.vSeq) : '--';
@@ -205,6 +261,9 @@ function showTab(t){
   document.querySelectorAll('.tab').forEach(function(b){
     b.classList.toggle('on', b.dataset.t === t);
   });
+}
+async function doAck(){
+  try { await fetch('/ack', {cache:'no-store'}); } catch(e){}
 }
 tick(); setInterval(tick, 1000);
 </script>
@@ -279,6 +338,30 @@ static String buildJson() {
   j += ",\"vHaveDir\":"; j += (v.haveDir ? "true" : "false");
   snprintf(num, sizeof(num), "%.0f", v.distM);  j += ",\"vDist\":"; j += num;
   j += ",\"vDirText\":\""; j += escapeJson(String(trackDirText(v))); j += "\"";
+
+  /* 全部信标（多只时网页要列出每一只，不只是最近活跃那只） */
+  j += ",\"acked\":";  j += (trackAcked() ? "true" : "false");
+  j += ",\"bs\":[";
+  int bn = trackBeaconCount();
+  for (int i = 0; i < bn; i++) {
+    const TrackTarget& t = trackBeaconAt(i);
+    if (i) j += ",";
+    j += "{";
+    j += "\"id\":";     j += t.id;
+    j += ",\"link\":";  j += (t.linkUp ? "true" : "false");
+    j += ",\"has\":";   j += (t.has ? "true" : "false");
+    j += ",\"valid\":"; j += (t.valid ? "true" : "false");
+    j += ",\"seq\":";   j += (unsigned long)t.seq;
+    j += ",\"rssi\":";  j += t.rssi;
+    snprintf(num, sizeof(num), "%.1f", t.snr);    j += ",\"snr\":";  j += num;
+    snprintf(num, sizeof(num), "%.6f", t.lat);    j += ",\"lat\":";  j += num;
+    snprintf(num, sizeof(num), "%.6f", t.lon);    j += ",\"lon\":";  j += num;
+    j += ",\"haveDir\":"; j += (t.haveDir ? "true" : "false");
+    snprintf(num, sizeof(num), "%.0f", t.distM);  j += ",\"dist\":"; j += num;
+    j += ",\"dirText\":\""; j += escapeJson(String(trackDirText(t))); j += "\"";
+    j += "}";
+  }
+  j += "]";
 
   j += ",\"runSec\":";     j += (millis() / 1000);
   j += "}";
@@ -405,6 +488,10 @@ void netBegin() {
   connectWifi();
   server.on("/", handleRoot);
   server.on("/data", handleData);
+  server.on("/ack", []() {
+    trackAcknowledge();
+    server.send(200, "text/plain; charset=utf-8", "ok");
+  });
   server.onNotFound(handleNotFound);
   server.begin();
   Serial.println("网页服务已启动。");

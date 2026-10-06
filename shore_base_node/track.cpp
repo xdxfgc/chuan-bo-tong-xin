@@ -97,7 +97,12 @@ static void refreshGeo(TrackTarget& t) {
    多只信标同时落水时不会把语音队列堆爆。                           */
 static unsigned long s_lastAnyAnnMs = 0;
 
+/* 人工确认标志：确认之后不再重复播报，直到有新信标上线（新事件）才复位 */
+static bool s_acked = false;
+
 static void maybeAnnounceBeacon(int slot) {
+  if (s_acked) return;                        // 已经人工确认过，别再吵
+
   TrackTarget& t = s_beacons[slot];
   AnnState&    a = s_ann[slot];
 
@@ -130,6 +135,7 @@ void trackBegin() {
     s_ann[i]     = AnnState();
   }
   s_vessel = TrackTarget();
+  s_acked  = false;
 }
 
 void trackOnPacket(const LoraPacket& pkt) {
@@ -189,6 +195,10 @@ void trackOnPacket(const LoraPacket& pkt) {
   t.lastMs = millis();
   t.linkUp = true;
 
+  /* 有信标从离线变在线 —— 这是新事件，把"已确认"清掉，让播报重新生效。
+     不然值班员确认过一次之后，后面真的又出事就不响了。 */
+  if (wasDown) s_acked = false;
+
   if (pkt.duplicate) {
     Serial.printf("[信标 %d] #%lu 是重传包，已忽略\n",
                   pkt.srcId, (unsigned long)pkt.seq);
@@ -210,13 +220,13 @@ void trackOnPacket(const LoraPacket& pkt) {
 
   refreshGeo(t);
 
-  if (wasDown && a.announced) voiceSpeakLinkBack();
+  if (wasDown && a.announced && !s_acked) voiceSpeakLinkBack();
   if (t.valid) {
     a.reportedNoFix = false;
     maybeAnnounceBeacon(slot);
   } else if (!a.reportedNoFix) {
     a.reportedNoFix = true;
-    voiceSpeakTargetNoPos();
+    if (!s_acked) voiceSpeakTargetNoPos();
   }
 }
 
@@ -226,7 +236,7 @@ void trackUpdate() {
         (millis() - s_beacons[i].lastMs > BEACON_LOST_MS)) {
       s_beacons[i].linkUp = false;
       Serial.printf("[信标 %d] 超过 15 秒没收到信标帧\n", s_beacons[i].id);
-      voiceSpeakLinkLost();
+      if (!s_acked) voiceSpeakLinkLost();     // 已确认过就不再念
     }
     if (s_beacons[i].has) refreshGeo(s_beacons[i]);
   }
@@ -307,3 +317,17 @@ const TrackTarget& trackVessel() { return s_vessel; }
 const char* trackDirText(const TrackTarget& t) {
   return t.haveDir ? GEO_DIR_UTF8[t.sector] : "--";
 }
+
+void trackAcknowledge() {
+  s_acked = true;
+  /* 顺便把每只信标的播报状态也清掉，这样解除确认之后
+     （比如又有新信标上线）能从头重新播报一次。 */
+  for (int i = 0; i < MAX_BEACONS; i++) {
+    s_ann[i].announced     = false;
+    s_ann[i].lastHaveDir   = false;
+    s_ann[i].reportedNoFix = false;
+  }
+  Serial.println("[告警] 已人工确认，停止重复语音播报（有新信标上线会重新报警）");
+}
+
+bool trackAcked() { return s_acked; }
