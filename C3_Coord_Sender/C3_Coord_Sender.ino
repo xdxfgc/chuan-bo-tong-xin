@@ -38,6 +38,23 @@
 static uint32_t seq     = 0;  // 帧序号，每轮加一
 static bool     saidIdle = false;   // "没在激活状态，保持静默"只在开始时提示一次
 
+/* 等待下一轮 —— 但不能死等。
+   信标平时 8 秒一帧，如果这里直接 delay(8000)，那 8 秒里水感根本不采样：
+   用户碰住电极，最长要等 8 秒才被发现，再加 2 秒确认，
+   文档要求的"20 次入水试验激活时间不超过 3 秒"就达不到了。
+
+   所以改成：等待期间照常采样，**水感状态一变就立刻返回**，马上发一帧。
+   这样"碰住电极 → 报警"的总延迟只有 WATER_CONFIRM_MS（2 秒）左右。       */
+static void waitNextRound(uint32_t period, bool wetNow) {
+  unsigned long t0 = millis();
+  while (millis() - t0 < period) {
+    delay(20);
+    waterUpdate();                              // 等待期间照常采样
+    bool wet1 = waterIsWet() && (waterWetMs() >= WATER_CONFIRM_MS);
+    if (wet1 != wetNow) return;                 // 状态变了，立刻开下一轮
+  }
+}
+
 void setup() {
   DBG.begin(115200);
   delay(1500);                // 等 USB 主机把串口打开，避免开头几个字丢掉
@@ -128,5 +145,8 @@ void loop() {
                wet ? "入水快发" : "值守慢发",
                (unsigned long)(wet ? ROUND_PERIOD_MS : IDLE_HEARTBEAT_MS));
   }
-  delay(wet ? ROUND_PERIOD_MS : IDLE_HEARTBEAT_MS);
+
+  /* 用"可打断的等待"代替 delay：水感一变就立刻发下一帧，
+     不然碰住电极要等最多 8 秒才被上报。 */
+  waitNextRound(wet ? ROUND_PERIOD_MS : IDLE_HEARTBEAT_MS, wet);
 }

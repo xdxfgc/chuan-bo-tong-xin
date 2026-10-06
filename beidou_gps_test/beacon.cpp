@@ -134,6 +134,14 @@ static void refreshGeo() {
 
 // 播报去重：同一条坐标不反复念，否则移动目标会把语音队列堆爆
 static void maybeAnnounce() {
+  /* 人工确认过就别再念了。
+     没有这一行的话，ANNOUNCE_MAX_MS（20 秒）一到就会重新播报一次，
+     就算你在串口敲了 ack、蜂鸣器已经停了，语音还是会一直念下去。
+
+     之所以不会漏掉下一次报警：链路失联时 beaconUpdate() 会把 s_acked
+     复位，所以信标重新上线（新事件）之后照样会报警。               */
+  if (s_acked) return;
+
   if (s_announced && (millis() - s_lastAnnounceMs < ANNOUNCE_MIN_GAP_MS)) return;
 
   bool first     = !s_announced;
