@@ -117,6 +117,7 @@ static const char INDEX_HTML[] = R"HTML(
     <div class="card"><div class="k">距信标</div><div class="v" id="bdist">--</div></div>
     <div class="card"><div class="k">信标方位</div><div class="v" id="bdir">--</div></div>
     <div class="card"><div class="k">信号（RSSI / SNR）</div><div class="v small" id="bsig">--</div></div>
+    <div class="card"><div class="k">最近更新</div><div class="v small" id="bage">--</div></div>
   </div>
   <div>
     <button class="btn" id="btnAck" onclick="doAck()">确认告警（静音语音播报）</button>
@@ -125,9 +126,9 @@ static const char INDEX_HTML[] = R"HTML(
   <table class="tbl">
     <thead><tr>
       <th>编号</th><th>链路</th><th>定位</th><th>坐标</th>
-      <th>距岸基</th><th>方位</th><th>RSSI</th>
+      <th>距岸基</th><th>方位</th><th>RSSI</th><th>更新</th>
     </tr></thead>
-    <tbody id="btable"><tr><td class="empty" colspan="7">还没收到信标数据</td></tr></tbody>
+    <tbody id="btable"><tr><td class="empty" colspan="8">还没收到信标数据</td></tr></tbody>
   </table>
   <p class="sub">多只信标同时落水时这里会各占一行；顶部横幅按最紧急的那只提示。</p>
   <p class="sub">收到信标 M 帧时本节点会回 ACK，岸端同样具备落水接收能力。</p>
@@ -138,10 +139,14 @@ static const char INDEX_HTML[] = R"HTML(
   <div class="grid">
     <div class="card"><div class="k">船端链路</div><div class="v small" id="vlink">--</div></div>
     <div class="card"><div class="k">船端定位</div><div class="v small" id="vstate">--</div></div>
+    <div class="card"><div class="k">最近更新</div><div class="v small" id="vage">--</div></div>
     <div class="card"><div class="k">船端序号</div><div class="v" id="vseq">--</div></div>
     <div class="card"><div class="k">船端坐标</div><div class="v small" id="vpos">--</div></div>
     <div class="card"><div class="k">距船端</div><div class="v" id="vdist">--</div></div>
     <div class="card"><div class="k">船端方位</div><div class="v" id="vdir">--</div></div>
+    <div class="card"><div class="k">对地速度</div><div class="v" id="vsog">--</div></div>
+    <div class="card"><div class="k">航向</div><div class="v" id="vcog">--</div></div>
+    <div class="card"><div class="k">卫星数</div><div class="v" id="vsats">--</div></div>
     <div class="card"><div class="k">信号（RSSI / SNR）</div><div class="v small" id="vsig">--</div></div>
   </div>
   <p class="sub">船端每 2 秒发一条 S 帧（本船位置，带对地速度/航向/卫星数），本节点收到后显示在这一屏。</p>
@@ -207,6 +212,7 @@ async function tick(){
     document.getElementById('bdist').textContent  = d.bHaveDir ? (d.bDist.toFixed(0)+' m') : '--';
     document.getElementById('bdir').textContent   = d.bHaveDir ? (d.bDirText+'方向') : '--';
     document.getElementById('bsig').textContent   = d.bHas ? (d.bRssi + ' dBm / ' + d.bSnr.toFixed(1) + ' dB') : '--';
+    document.getElementById('bage').textContent   = fmtAge(d.bAge);
 
     /* 信标列表：后端按编号分槽位，多只信标同时落水也能各占一行 */
     const tb = document.getElementById('btable');
@@ -221,10 +227,11 @@ async function tick(){
           '<td class="' + (x.link ? 'ok' : 'bad') + '">' + (x.link ? '在线' : '离线') + '</td>' +
           '<td>' + st + '</td><td>' + pos + '</td>' +
           '<td>' + dist + '</td><td>' + dir + '</td>' +
-          '<td>' + x.rssi + ' dBm</td></tr>';
+          '<td>' + x.rssi + ' dBm</td>' +
+          '<td>' + fmtAge(x.age) + '</td></tr>';
       }).join('');
     } else {
-      tb.innerHTML = '<tr><td class="empty" colspan="7">还没收到信标数据</td></tr>';
+      tb.innerHTML = '<tr><td class="empty" colspan="8">还没收到信标数据</td></tr>';
     }
 
     /* 确认按钮：确认之后停止重复播报；有新信标上线会自动恢复 */
@@ -239,6 +246,10 @@ async function tick(){
     document.getElementById('vdist').textContent  = d.vHaveDir ? (d.vDist.toFixed(0)+' m') : '--';
     document.getElementById('vdir').textContent   = d.vHaveDir ? (d.vDirText+'方向') : '--';
     document.getElementById('vsig').textContent   = d.vHas ? (d.vRssi + ' dBm / ' + d.vSnr.toFixed(1) + ' dB') : '--';
+    document.getElementById('vage').textContent   = fmtAge(d.vAge);
+    document.getElementById('vsog').textContent   = d.vHasExtra ? (d.vSog.toFixed(1) + ' 节') : '--';
+    document.getElementById('vcog').textContent   = d.vHasExtra ? (d.vCog.toFixed(0) + '°') : '--';
+    document.getElementById('vsats').textContent  = d.vHasExtra ? (d.vSats + ' 颗') : '--';
 
     document.getElementById('frame').textContent = d.frame;
     document.getElementById('raw').textContent   = d.raw;
@@ -264,6 +275,13 @@ function showTab(t){
 }
 async function doAck(){
   try { await fetch('/ack', {cache:'no-store'}); } catch(e){}
+}
+/* 把"距上次收到多少秒"变成"3 秒前"这种，-1 表示从来没收到过 */
+function fmtAge(s){
+  if(s === null || s === undefined || s < 0) return '未收到';
+  if(s < 60)   return s + ' 秒前';
+  if(s < 3600) return Math.floor(s / 60) + ' 分前';
+  return Math.floor(s / 3600) + ' 时前';
 }
 tick(); setInterval(tick, 1000);
 </script>
@@ -317,6 +335,12 @@ static String buildJson() {
   j += ",\"bHas\":";    j += (b.has ? "true" : "false");
   j += ",\"bId\":";     j += b.id;
   j += ",\"bCount\":";  j += trackBeaconCount();
+  /* 最近更新：距上次收到过了多少秒；-1 表示从来没收到过 */
+  {
+    uint32_t ab = trackAgeMs(b);
+    snprintf(num, sizeof(num), "%ld", (ab == 0xFFFFFFFFUL) ? -1L : (long)(ab / 1000UL));
+    j += ",\"bAge\":"; j += num;
+  }
   j += ",\"bValid\":";  j += (b.valid ? "true" : "false");
   j += ",\"bSeq\":";    j += (unsigned long)b.seq;
   j += ",\"bRssi\":";   j += b.rssi;
@@ -339,6 +363,17 @@ static String buildJson() {
   snprintf(num, sizeof(num), "%.0f", v.distM);  j += ",\"vDist\":"; j += num;
   j += ",\"vDirText\":\""; j += escapeJson(String(trackDirText(v))); j += "\"";
 
+  /* 船端的附加数据（只有 S 帧带；收到的是 A 帧时保留上一次的值） */
+  {
+    uint32_t av = trackAgeMs(v);
+    snprintf(num, sizeof(num), "%ld", (av == 0xFFFFFFFFUL) ? -1L : (long)(av / 1000UL));
+    j += ",\"vAge\":"; j += num;
+  }
+  j += ",\"vHasExtra\":"; j += (v.hasExtra ? "true" : "false");
+  snprintf(num, sizeof(num), "%.1f", v.sogKnots); j += ",\"vSog\":";  j += num;
+  snprintf(num, sizeof(num), "%.0f", v.cogDeg);   j += ",\"vCog\":";  j += num;
+  j += ",\"vSats\":";     j += v.sats;
+
   /* 全部信标（多只时网页要列出每一只，不只是最近活跃那只） */
   j += ",\"acked\":";  j += (trackAcked() ? "true" : "false");
   j += ",\"bs\":[";
@@ -359,6 +394,11 @@ static String buildJson() {
     j += ",\"haveDir\":"; j += (t.haveDir ? "true" : "false");
     snprintf(num, sizeof(num), "%.0f", t.distM);  j += ",\"dist\":"; j += num;
     j += ",\"dirText\":\""; j += escapeJson(String(trackDirText(t))); j += "\"";
+    {
+      uint32_t at = trackAgeMs(t);
+      snprintf(num, sizeof(num), "%ld", (at == 0xFFFFFFFFUL) ? -1L : (long)(at / 1000UL));
+      j += ",\"age\":"; j += num;
+    }
     j += "}";
   }
   j += "]";

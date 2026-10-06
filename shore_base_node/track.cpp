@@ -170,6 +170,15 @@ void trackOnPacket(const LoraPacket& pkt) {
     t.rssi  = pkt.rssi;
     t.snr   = pkt.snr;
 
+    /* 船端的 S 帧带对地速度/航向/卫星数；如果这包没带（比如收到的是
+       船端回的 A 帧），就保留上一次的值，别清零。 */
+    if (pkt.hasExtra) {
+      t.hasExtra = true;
+      t.sogKnots = pkt.sogKnots;
+      t.cogDeg   = pkt.cogDeg;
+      t.sats     = pkt.sats;
+    }
+
     Serial.printf("[%s] 收到 %d #%lu  定位=%s  %.6f, %.6f  RSSI=%d dBm  SNR=%.1f dB\n",
                   name, pkt.srcId, (unsigned long)pkt.seq,
                   pkt.valid ? "有效" : "无效", pkt.lat, pkt.lon, pkt.rssi, pkt.snr);
@@ -331,3 +340,8 @@ void trackAcknowledge() {
 }
 
 bool trackAcked() { return s_acked; }
+
+uint32_t trackAgeMs(const TrackTarget& t) {
+  if (!t.has) return 0xFFFFFFFFUL;           // 从来没收到过
+  return millis() - t.lastMs;
+}

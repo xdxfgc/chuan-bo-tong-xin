@@ -39,6 +39,14 @@ struct LoraPacket {
   bool     valid     = false;   // 对方定位是否有效
   double   lat       = 0.0;
   double   lon       = 0.0;
+
+  /* 附加字段：只有船端的 S 帧带（对地速度、航向、卫星数）。
+     信标帧没有这几个，hasExtra 就是 false。                        */
+  bool     hasExtra  = false;
+  float    sogKnots  = 0.0f;    // 对地速度（节）
+  float    cogDeg    = 0.0f;    // 对地航向（度）
+  int      sats      = 0;       // 参与定位的卫星数
+
   bool     duplicate = false;   // 同一个发送者、同一个序号（对方没收到 ACK 重发的）
   int      rssi      = 0;
   float    snr       = 0.0f;

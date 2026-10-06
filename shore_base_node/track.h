@@ -26,6 +26,13 @@ struct TrackTarget {
   double        lon       = 0.0;
   int           rssi      = 0;
   float         snr       = 0.0f;
+
+  /* 附加字段：只有船端的 S 帧带（对地速度、航向、卫星数），信标没有 */
+  bool          hasExtra  = false;
+  float         sogKnots  = 0.0f;   // 对地速度（节）
+  float         cogDeg    = 0.0f;   // 对地航向（度）
+  int           sats      = 0;      // 参与定位的卫星数
+
   bool          haveDir   = false;   // 本节点已定位且对方坐标有效
   float         distM     = 0.0f;
   float         bearing   = 0.0f;
@@ -44,6 +51,10 @@ int                trackBeaconCount();       // 已经收到过数据的信标�
 const TrackTarget& trackBeaconAt(int i);     // 第 i 只（0 ≤ i < count）
 
 const char*        trackDirText(const TrackTarget& t);   // 方位文字，如“东北”
+
+/* 距最近一次收到这个目标的数据过了多久（毫秒）。
+   从来没收到过返回 0xFFFFFFFF —— 网页上"最近更新"靠它显示"3 秒前"这种。 */
+uint32_t           trackAgeMs(const TrackTarget& t);
 
 /* 人工确认告警：确认之后停止重复播报（落水、失联、恢复都不再念），
    但网页和屏上的显示照旧。等有新信标上线（从离线变在线）会自动重新允许播报，

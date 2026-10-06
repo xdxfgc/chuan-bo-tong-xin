@@ -122,13 +122,28 @@ static bool parsePacketString(const String& s, LoraPacket* out) {
   }
   payload.trim();
 
-  /* 载荷统一是 "<P或C>,<定位有效>,<纬度>,<经度>[,多余字段…]"
-     船端的 S 帧后面还跟着对地速度、航向、卫星数，本节点用不到，
-     sscanf 读够前三个就停，多余的字段自动忽略。                     */
-  int    fix = 0;
+  /* 载荷统一是 "<P或C>,<定位有效>,<纬度>,<经度>[,对地速度节,航向度,卫星数]"
+     前面四个字段三种帧都有；后面三个只有船端的 S 帧才带。
+     所以一次把六个都试着读出来，读够几个算几个：
+       信标帧  -> 读到 3 个（fix/纬度/经度）
+       船端帧  -> 读到 6 个，多的三个填进 hasExtra/sogKnots/cogDeg/sats
+     这样以后协议再加字段也不会把这一端弄坏。                        */
+  int    fix = 0, sats = 0;
   double la = 0, lo = 0;
-  if (sscanf(payload.c_str(), "%*[^,],%d,%lf,%lf", &fix, &la, &lo) != 3) {
-    if (sscanf(payload.c_str(), "%d,%lf,%lf", &fix, &la, &lo) != 3) return false;
+  float  sog = 0.0f, cog = 0.0f;
+
+  int got = sscanf(payload.c_str(), "%*[^,],%d,%lf,%lf,%f,%f,%d",
+                   &fix, &la, &lo, &sog, &cog, &sats);
+  if (got < 3) {                             // 兼容不带标签的 "纬度,经度"
+    got = sscanf(payload.c_str(), "%d,%lf,%lf,%f,%f,%d",
+                 &fix, &la, &lo, &sog, &cog, &sats);
+    if (got < 3) return false;
+  }
+  if (got >= 6) {                            // 船端帧：把附加字段带上
+    out->hasExtra = true;
+    out->sogKnots = sog;
+    out->cogDeg   = cog;
+    out->sats     = sats;
   }
 
   // 越界或 (0,0) 一律当作无效
