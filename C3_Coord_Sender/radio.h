@@ -20,4 +20,8 @@ bool radioReceive(String& out, uint32_t timeoutMs);  // 在超时内等一帧
 int   radioLastRssi();                               // 最近一帧的 RSSI
 float radioLastSnr();                                // 最近一帧的 SNR
 
+/* 让 SX1278 进睡眠（芯片 0.2µA 级）。深睡之前调一次，省电。
+   注意：这只是让芯片睡，模块板上的 LDO/指示灯该耗还在耗。 */
+void  radioSleep();
+
 #endif

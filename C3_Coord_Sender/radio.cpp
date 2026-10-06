@@ -95,3 +95,8 @@ bool radioReceive(String& out, uint32_t timeoutMs) {
 
 int   radioLastRssi() { return s_rssi; }
 float radioLastSnr()  { return s_snr; }
+
+void radioSleep() {
+  if (!s_ready) return;
+  LoRa.sleep();          // SX1278 进 sleep 模式，芯片电流降到 0.2µA 级
+}

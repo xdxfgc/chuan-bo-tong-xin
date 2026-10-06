@@ -34,9 +34,30 @@
 #include "cmd.h"
 #include "radio.h"
 #include "link.h"
+#include "power.h"
 
 static uint32_t seq     = 0;  // 帧序号，每轮加一
 static bool     saidIdle = false;   // "没在激活状态，保持静默"只在开始时提示一次
+
+#if ENABLE_DEEP_SLEEP
+/* 深睡模式下的两个状态：
+     gActiveMode —— 本次上电是不是"确认入水"了（没确认就直接睡了，不会到这）
+     gLastWetMs  —— 最近一次"水感导通"的时刻，用来判断"离水多久了" */
+static bool          gActiveMode = false;
+static unsigned long gLastWetMs  = 0;
+#endif
+
+/* 等水感确认：连续湿够 WATER_CONFIRM_MS 毫秒返回 true，超时返回 false。
+   等待期间照常采样。                                              */
+static bool waterConfirm(uint32_t timeoutMs) {
+  unsigned long t0 = millis();
+  while (millis() - t0 < timeoutMs) {
+    waterUpdate();
+    if (waterIsWet() && waterWetMs() >= WATER_CONFIRM_MS) return true;
+    delay(20);
+  }
+  return false;
+}
 
 /* 等待下一轮 —— 但不能死等。
    信标平时 8 秒一帧，如果这里直接 delay(8000)，那 8 秒里水感根本不采样：
@@ -56,8 +77,17 @@ static void waitNextRound(uint32_t period, bool wetNow) {
 }
 
 void setup() {
+  powerBegin();               // 最先做：解除上次休眠留下的引脚保持
+
   DBG.begin(115200);
-  delay(1500);                // 等 USB 主机把串口打开，避免开头几个字丢掉
+
+  /* 冷启动等久一点，让 USB 主机把串口打开（不然开头几个字丢掉）；
+     被水感叫醒时抢时间，只等一小会儿。 */
+#if ENABLE_DEEP_SLEEP
+  delay(powerWokeByWater() ? WAKE_LOG_DELAY_MS : 1500);
+#else
+  delay(1500);
+#endif
   DBG.println();
   DBG.println("===== 坐标发送端 ESP32-C3（信标） =====");
   DBG.printf("本机标识 DEV_ID = %d（每只信标要不一样）\n", DEV_ID);
@@ -66,13 +96,39 @@ void setup() {
   DBG.printf("基坐标：%.6f, %.6f\n", BASE_LAT, BASE_LON);
 #endif
 
+  /* 唤醒原因：区分"冷启动"和"被水感叫醒" */
+  bool byWater = powerWokeByWater();
+  DBG.printf("唤醒原因：%s\n", byWater ? "水感电极" : "冷启动 / 复位");
+
+  /* 被水感叫醒的话，先把北斗的电加上，让它早点开始搜星 */
+  if (byWater) powerGpsOn();
+
   coordBegin();               // 坐标来源（模式 2 会打开北斗串口）
+  if (byWater) coordWake();   // 北斗只是待机过的话，叫它醒来
   waterBegin();               // 水感检测（电极 / 杜邦线）
   postureBegin();             // 姿态传感器（MPU6050，I2C GPIO0/1）
   triggerBegin();             // 落水激活状态机
   buttonBegin();              // 板载 BOOT 键（长按复位）
   radioBegin();               // 射频（内部会先按实际接线打开 SPI 总线）
   cmdBegin();                 // 串口命令提示
+
+#if ENABLE_DEEP_SLEEP
+  /* 上电之后先给水感一段确认时间：
+       确认入水  → 进入上报模式（下面 loop 里一直发）
+       没确认    → 说明是误触发，或者只是正常上电，直接睡回去
+
+     唤醒 ≠ 落水：水把电极接通只是一瞬间的事，浪花、冷凝水都能做到。
+     真正的判定还是"连续湿够 WATER_CONFIRM_MS"。                     */
+  DBG.printf("[电源] 等待水感确认（要连续湿 %lu ms）…\n",
+             (unsigned long)WATER_CONFIRM_MS);
+  if (!waterConfirm(WATER_CONFIRM_MS + 800)) {
+    DBG.println("[电源] 没检测到入水（误触发或者只是上电）");
+    powerGoSleep();           // 睡下去，不返回
+  }
+  gActiveMode = true;
+  gLastWetMs  = millis();
+  DBG.println("[电源] 确认入水，进入上报模式");
+#endif
 }
 
 void loop() {
@@ -84,6 +140,22 @@ void loop() {
   posturePrintReport();       // 姿态数据行（每秒一行）
 
   if (buttonResetEvent()) triggerReset();   // BOOT 键长按 5 秒 = 复位
+
+#if ENABLE_DEEP_SLEEP
+  /* 上报模式下的"回睡"判断：
+       水感导通 → 刷新"最近湿的时刻"
+       一直不导通、且超过 IDLE_TO_SLEEP_MS → 认为已经离开水面，回去睡
+     用"持续一段时间"而不是"一离开就睡"，是为了不被浪盖住又露出来打断。 */
+  if (gActiveMode) {
+    if (waterIsWet()) {
+      gLastWetMs = millis();
+    } else if (millis() - gLastWetMs > IDLE_TO_SLEEP_MS) {
+      DBG.printf("[电源] 已离水超过 %lu 秒，回去睡\n",
+                 (unsigned long)(IDLE_TO_SLEEP_MS / 1000));
+      powerGoSleep();           // 睡下去，不返回
+    }
+  }
+#endif
 
   // 射频没起来就每秒重试一次，不会一直趴着
   if (!radioIsReady()) {

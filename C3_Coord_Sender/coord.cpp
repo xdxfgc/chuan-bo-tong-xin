@@ -238,3 +238,26 @@ void coordBuildPayload(char* buf, size_t n) {
   coordGet(&v, &la, &lo);
   snprintf(buf, n, "P,%d,%.6f,%.6f", v ? 1 : 0, la, lo);
 }
+
+/* ---------------- 北斗待机 / 唤醒 ----------------
+   ATGM336H-5N 认 PMTK 指令：
+     $PMTK161,0*28  进待机
+     $PMTK161,1*29  唤醒
+   待机能省一些电，但**到不了 200µA** —— 真要达标还得靠 config.h 里
+   那个 GPS_PWR_PIN 把模块的电断掉。
+   只有 SRC_MODE = 2（真的开着北斗串口）才有意义。                      */
+
+void coordSleep() {
+#if SRC_MODE == 2
+  GnssSerial.print("$PMTK161,0*28\r\n");
+  GnssSerial.flush();
+  DBG.println("[北斗] 已发待机指令 $PMTK161,0");
+#endif
+}
+
+void coordWake() {
+#if SRC_MODE == 2
+  GnssSerial.print("$PMTK161,1*29\r\n");
+  GnssSerial.flush();
+#endif
+}

@@ -22,4 +22,10 @@ const char* coordSourceText();     // 坐标来源的文字说明，开机打印
 // 组出要发送的载荷：P,<定位有效>,<纬度>,<经度>
 void coordBuildPayload(char* buf, size_t n);
 
+/* 让北斗模块进待机 / 唤醒（只有 SRC_MODE = 2 有意义，其它模式是空操作）。
+   待机电流比正常工作低一些，但**到不了 200µA** —— 真要省电还是得给
+   北斗模块的 VCC 串一个 MOS 开关（见 config.h 的 GPS_PWR_PIN）。      */
+void coordSleep();
+void coordWake();
+
 #endif
