@@ -26,6 +26,39 @@ static uint16_t sideMm    = 0;
 
 static unsigned long tofLastReadMs = 0;
 
+/* ==================== I2C 小工具（裸 Wire 操作） ====================
+   为什么需要这些：VL53L1X 的 I2C 地址写进芯片就一直在，**不随 ESP32 复位恢复**。
+   所以我们把船头那只改成 0x2A 之后，只要 ESP32 重启（按 EN、重新烧录、看门狗复位）
+   而激光模块没断电，它就还停在 0x2A —— 下次开机代码去 0x29 找它，必然找不到，
+   日志就会出现「船头初始化失败、右舷正常」。
+   下面的函数用裸 I2C 直接跟 0x2A 说话，把它请回 0x29。              */
+
+// 探一下某个地址有没有器件应答（只发地址，不读写寄存器，安全）
+static bool busProbe(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  return Wire.endTransmission() == 0;
+}
+
+// 把某只 VL53L1X 的地址改成 to（写寄存器 0x0001 即可，与库的 setAddress 等价）
+static bool busSetAddress(uint8_t from, uint8_t to) {
+  Wire.beginTransmission(from);
+  Wire.write(0x00);              // 寄存器地址高字节
+  Wire.write(0x01);              // 寄存器地址低字节 → 0x0001 = 器件地址寄存器
+  Wire.write(to & 0x7F);
+  return Wire.endTransmission() == 0;
+}
+
+// 把总线上真实存在的地址打印出来（初始化失败时用，一眼看出谁在谁不在）
+static void busPrintDevices() {
+  Serial.print("当前 I2C 总线上的器件：");
+  uint8_t n = 0;
+  for (uint8_t a = 1; a < 127; a++) {
+    if (busProbe(a)) { Serial.printf("0x%02X ", a); n++; }
+  }
+  if (n == 0) Serial.print("一个都没有（供电/共地/SDA/SCL 要查）");
+  Serial.println();
+}
+
 // 配置一只传感器：测距模式、时间预算、开始连续测量
 static void tofConfig(VL53L1X& t) {
   t.setDistanceMode(TOF_LONG_RANGE ? VL53L1X::Long : VL53L1X::Short);
@@ -41,14 +74,27 @@ void tofBegin() {
   pinMode(TOF2_XSHUT_PIN, OUTPUT);
   digitalWrite(TOF2_XSHUT_PIN, LOW);      // 右舷那只先按住，别来抢 0x29
   delay(20);
+
+  /* 船头那只没有 XSHUT 线，ESP32 复位时它不跟着复位：
+     上次被改成 0x2A 的地址会一直留着。这里先探一下，把它请回 0x29，
+     否则下面的船头初始化必然失败（就是日志里那个现象）。 */
+  if (!busProbe(0x29) && busProbe(TOF_ADDR_BOW)) {
+    Serial.printf("检测到船头那只还停在 0x%02X（上次运行残留的地址，芯片没断电不会自己复位），"
+                  "正在改回 0x29…\n", TOF_ADDR_BOW);
+    busSetAddress(TOF_ADDR_BOW, 0x29);
+    delay(10);
+  }
 #endif
 
   /* ---- 船头那只 ---- */
   tofBow.setTimeout(500);
   if (!tofBow.init()) {
     bowReady = false;
-    Serial.println("激光测距 VL53L1X（船头）初始化失败：检查 VIN 是否接 3.3V、"
-                   "GND 是否共地、SDA/SCL 是否接对。");
+    Serial.println("激光测距 VL53L1X（船头）初始化失败，按下面扫到的地址对号入座：");
+    Serial.println("  只有 0x3C / 0x68（没有激光）→ 这只根本没上总线：VIN 要 3.3V、GND 共地、"
+                   "SDA=GPIO21、SCL=GPIO22 别接反");
+    Serial.println("  有 0x2A 却没能自动改回来 → 模块供电不稳 / 杜邦线接触不良");
+    busPrintDevices();
   } else {
 #if TOF_SIDE_ENABLE
     tofBow.setAddress(TOF_ADDR_BOW);      // 让出 0x29 给右舷那只
@@ -70,11 +116,16 @@ void tofBegin() {
     sideReady = false;
     Serial.println("激光测距 VL53L1X（右舷）初始化失败：先查 XSHUT 有没有接 GPIO32、"
                    "SDA/SCL 有没有和船头那只并联、VIN 是不是 3.3V。");
+    busPrintDevices();
   } else {
     tofConfig(tofSide);
     sideReady = true;
-    Serial.printf("激光测距（右舷）已启动：地址 0x%02X（和船头那只 0x%02X 分开）\n",
-                  tofSide.getAddress(), tofBow.getAddress());
+    if (bowReady)
+      Serial.printf("激光测距（右舷）已启动：地址 0x%02X（船头那只在 0x%02X，两路都在）\n",
+                    tofSide.getAddress(), tofBow.getAddress());
+    else
+      Serial.printf("激光测距（右舷）已启动：地址 0x%02X（船头那只这次没起来）\n",
+                    tofSide.getAddress());
   }
 #endif
 }
@@ -114,9 +165,36 @@ bool     tofIsReady()    { return bowReady; }
 bool     tofIsValid()    { return bowValid; }
 uint16_t tofDistanceMm() { return bowMm; }
 
+/* 把"测距失败原因"翻译成人话 —— 直接告诉你该往哪个方向查。
+   状态码来自 VL53L1X 库的 RangeStatus 枚举。                        */
+static const char* tofFailReason(uint8_t st) {
+  switch (st) {
+    case VL53L1X::RangeValid:                return "正常";
+    case VL53L1X::SigmaFail:                 return "信号弱：目标太远、太黑，或环境光太强";
+    case VL53L1X::SignalFail:                return "回波太弱：目标太黑/太斜，或镜头脏了";
+    case VL53L1X::RangeValidMinRangeClipped: return "贴在最小量程边上（约 4cm）";
+    case VL53L1X::OutOfBoundsFail:           return "超出量程：目标太远（>4m）或没有反射面";
+    case VL53L1X::HardwareFail:              return "硬件故障：传感器可能坏了";
+    case VL53L1X::RangeValidNoWrapCheckFail: return "正常（未做缠绕检查）";
+    case VL53L1X::WrapTargetFail:            return "相位缠绕：目标太远";
+    case VL53L1X::XtalkSignalFail:           return "串扰：镜头前面有东西挡着";
+    case VL53L1X::SynchronizationInt:        return "同步中断（刚启动那一下，忽略即可）";
+    case VL53L1X::MinRangeFail:              return "目标太近（小于 4cm）";
+    default: {
+      static char b[24];
+      snprintf(b, sizeof(b), "未知状态 %u", (unsigned)st);
+      return b;
+    }
+  }
+}
+
 String tofText() {
   if (!bowReady) return "模块未连接";
-  if (!bowValid) return "无效（超出量程或信号弱）";
+  if (!bowValid) {
+    char b[80];
+    snprintf(b, sizeof(b), "无效（%s）", tofFailReason(tofBow.ranging_data.range_status));
+    return String(b);
+  }
   char b[32];
   snprintf(b, sizeof(b), "%u mm (%.2f m)", (unsigned)bowMm, bowMm / 1000.0);
   return String(b);
@@ -129,7 +207,11 @@ uint16_t tofSideDistanceMm() { return sideMm; }
 
 String tofSideText() {
   if (!sideReady) return "模块未连接";
-  if (!sideValid) return "无效（超出量程或信号弱）";
+  if (!sideValid) {
+    char b[80];
+    snprintf(b, sizeof(b), "无效（%s）", tofFailReason(tofSide.ranging_data.range_status));
+    return String(b);
+  }
   char b[32];
   snprintf(b, sizeof(b), "%u mm (%.2f m)", (unsigned)sideMm, sideMm / 1000.0);
   return String(b);
