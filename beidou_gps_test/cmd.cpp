@@ -9,6 +9,7 @@
 #include "buzzer.h"
 #include "anchor.h"
 #include "logbook.h"
+#include "tof.h"
 
 static char   s_buf[32];
 static size_t s_n = 0;
@@ -23,6 +24,7 @@ static void printHelp() {
   Serial.println("  decl -5.2   设置磁偏角（真北修正）");
   Serial.println("  mag         立刻打印一行磁力计数据");
   Serial.println("  dock        打印靠泊状态（距离、接近速度、告警）");
+  Serial.println("  tof         激光测距自检（两路各读 5 次，看回波强度定位问题）");
   Serial.println("  ack         确认落水告警（停止蜂鸣器）");
   Serial.println("  buzz on/off 打开或关闭蜂鸣器");
   Serial.println("  moor set    把当前位置设为锚泊基准，开始走锚监测");
@@ -65,6 +67,8 @@ static void runCmd(char* cmd) {
   if (low == "mag" || low == "data") { cmdPrintMagLine(); return; }
 
   if (low == "dock") { berthPrintReport(); return; }
+
+  if (low == "tof" || low == "laser") { tofSelfTest(); return; }
 
   if (low == "ack") { buzzerAcknowledge(); return; }
 

@@ -53,6 +53,15 @@ static unsigned long s_enterMs       = 0;      // 进入监测的时刻
 static float         s_maxDist       = 0.0f;   // 进入监测后见过的最大距离
 static unsigned long s_undockMs      = 0;      // 开始远离的时刻
 
+/* 一次性播报（进入监测、靠泊完成）错过就不会再有，
+   所以不跳过、只延后：先记下来，等上一句念完再放出去。 */
+static bool          s_pendingEnter  = false;
+static bool          s_pendingDone   = false;
+
+/* 上一次播报出去的距离：距离变化不到门槛就不开口，省一半的话 */
+static bool          s_hasSayDist    = false;
+static float         s_sayDist       = 0.0f;
+
 /* ---------------- 工具 ---------------- */
 
 static float median3(float a, float b, float c) {
@@ -143,14 +152,37 @@ static void updateAlarm() {
 
 /* ---------------- 播报 ---------------- */
 
+/* 把挂着的一次性播报放出去（进入监测 / 靠泊完成）。
+   这两句错过就没了，所以策略是"等"而不是"跳过"：上一句没念完就再等下一轮。 */
+static void berthFlushPending() {
+  if (!s_pendingEnter && !s_pendingDone) return;
+  if (voiceBusy()) return;                 // 上一句还在念，等着
+
+  if (s_pendingEnter) {
+    s_pendingEnter = false;
+    voiceSpeakBerthEnter(s_dist, s_useSide);
+  } else {
+    s_pendingDone = false;
+    voiceSpeakBerthDone(s_useSide);
+  }
+  s_lastAnnounceMs = millis();
+}
+
 static void berthAnnounce() {
   unsigned long now = millis();
+
+  /* 有挂着的一次性播报时，距离播报先让路 ——
+     距离下一轮还有，那两句只有一次 */
+  if (s_pendingEnter || s_pendingDone) return;
 
   // 告警优先，且优先级高于距离播报
   if (s_alarm != 0x00) {
     if (now - s_lastAnnounceMs < BERTH_ALARM_GAP_MS) return;
+    /* 正在念的如果是同级（别的告警）或更高（落水），就等它念完；
+       正在念的只是距离播报的话，直接顶掉 —— 报警优先。 */
+    if (voiceBusyPrio() >= VOICE_PRIO_ALARM) return;
     s_lastAnnounceMs = now;
-    voiceSpeakBerthAlarm(s_alarm);
+    voiceSpeakBerthAlarm(s_alarm, s_useSide);
     return;
   }
 
@@ -160,12 +192,30 @@ static void berthAnnounce() {
   // 用速度而不是极差，这样浪造成的往复波动不会让播报停不下来。
   if (fabsf(s_speed) < BERTH_QUIET_SPEED) return;
 
-  uint32_t gap = 2000;                       // 近处播得勤一点
-  if (s_dist >= 2.0f) gap = 2500;            // 远处慢一点
+  /* 变化门槛：距离没挪够就别开口。
+     "话"报得比"念"还快，是上一句被掐断的根因，先从这里减一半。 */
+  if (s_hasSayDist && fabsf(s_dist - s_sayDist) < BERTH_ANNOUNCE_STEP_M) return;
+
+  uint32_t gap = 3000;                       // 近处 3 秒一句（原来 2 秒）
+  if (s_dist >= 2.0f) gap = 3500;            // 远处再慢半秒
   if (now - s_lastAnnounceMs < gap) return;
 
+  /* 上一句还没念完就跳过这一次。
+     靠泊报的是"当前距离"，晚一两秒再念出来数字就过期了，排队没有意义，
+     所以宁可少说一句，也不要半句话被下一句掐断。下一轮再报最新的距离。 */
+  if (voiceBusy()) {
+    static unsigned long lastSkipLog = 0;
+    if (now - lastSkipLog >= 3000) {
+      lastSkipLog = now;
+      Serial.println("[靠泊] 上一句话还没念完，本次距离播报跳过");
+    }
+    return;
+  }
+
   s_lastAnnounceMs = now;
-  voiceSpeakBerthDistance(s_dist, s_dist < BERTH_NEAR_M);
+  s_sayDist        = s_dist;
+  s_hasSayDist     = true;
+  voiceSpeakBerthDistance(s_dist, s_dist < BERTH_NEAR_M, s_useSide);
 }
 
 static void berthEnd(const char* why) {
@@ -208,6 +258,9 @@ void berthBegin() {
   s_active = false;
   s_docked = false;
   s_alarm  = 0x00;
+  s_pendingEnter = false;
+  s_pendingDone  = false;
+  s_hasSayDist   = false;
   s_lastValidMs = millis();
   Serial.println("靠泊辅助已就绪：右舷优先（侧靠），看不到岸时自动用船头，"
                  "靠近到 3.5 米开始监测。");
@@ -217,6 +270,10 @@ void berthUpdate() {
   unsigned long now = millis();
   if (now - s_lastSampleMs < TOF_READ_MS) return;
   s_lastSampleMs = now;
+
+  /* 先把挂着的"进入监测 / 靠泊完成"放出去（等上一句念完），
+     放在最前面，靠泊结束之后也照样能放。 */
+  berthFlushPending();
 
   /* ---- 选数据源：右舷优先（侧靠），看不到岸就退回船头 ---- */
   bool useSide = pickSideSource();
@@ -276,7 +333,7 @@ void berthUpdate() {
       s_undockMs  = 0;
       s_enterMs   = now;
       s_maxDist   = s_dist;
-      voiceSpeakBerthEnter(s_dist);
+      s_pendingEnter = true;        // 不插话：等上一句念完再报（下一轮 loop 放）
       s_lastAnnounceMs = millis();
       Serial.printf("[靠泊] 进入监测，距离 %.2f 米\n", s_dist);
     }
@@ -296,7 +353,7 @@ void berthUpdate() {
       winRange() < BERTH_DONE_STEADY_M) {
     s_docked = true;
     s_alarm  = 0x00;
-    voiceSpeakBerthDone();
+    s_pendingDone = true;           // 同上：等上一句念完
     s_lastAnnounceMs = millis();
     Serial.printf("[靠泊] 判定靠妥，距离 %.2f 米\n", s_dist);
   }
@@ -307,7 +364,7 @@ void berthUpdate() {
       (now - s_enterMs) >= BERTH_MIN_WATCH_MS &&
       (now - s_lastValidMs) > 300) {
     s_docked = true;
-    voiceSpeakBerthDone();
+    s_pendingDone = true;
     s_lastAnnounceMs = now;
     Serial.println("[靠泊] 读数进入盲区，判定已接触");
   }

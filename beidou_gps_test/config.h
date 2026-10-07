@@ -159,6 +159,12 @@ static const float    BERTH_SCREEN_SPEED   = 0.01f;  // 移动超过这个速度
 static const float BERTH_QUIET_SPEED   = 0.02f;
 static const uint32_t BERTH_ALARM_GAP_MS = 3000; // 告警播报最短间隔
 
+/* 距离播报的"变化门槛"：距离只挪了一点点就别开口。
+   船慢慢蹭着靠过去的时候，2 秒一次的播报会把话说得比念得还快，
+   上一句还没念完下一句就来了 —— 加了这个门槛，说话次数能少一半。
+   嫌报得太少就调小（0.2），嫌太吵就调大（0.5）。                */
+static const float BERTH_ANNOUNCE_STEP_M = 0.30f;
+
 static const uint8_t BERTH_DEBOUNCE_N  = 3;     // 告警去抖：连续多少帧满足才置位
 
 /* ---------------- LoRa SX1278（433MHz，SPI） ----------------
@@ -207,7 +213,7 @@ static const int  RF_SYNC = 0x12;
 static const int      SYN_RX_PIN = 4;
 static const int      SYN_TX_PIN = 16;
 static const uint32_t SYN_BAUD   = 9600;
-static const uint8_t  SYN_VOLUME = 16;
+static const uint8_t  SYN_VOLUME = 8;
 
 /* ---------------- 播报节奏 ---------------- */
 static const uint32_t LINK_LOST_MS        = 15000;  // 超时未收信标就播报失去联系

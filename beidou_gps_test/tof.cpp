@@ -135,27 +135,39 @@ void tofUpdate() {
   tofLastReadMs = millis();
 
   if (bowReady) {
-    uint16_t d = tofBow.read(false);
-    if (tofBow.timeoutOccurred()) {
+    /* 读之前先问一句"这次测好了吗"。非阻塞读遇到"还没测好"会直接返回 0，
+       而 ranging_data.range_status 还留着上一次的值（通常正好是"正常"），
+       于是 0 毫米会被当成一次真读数，串口上就出现「0 mm (0.00 m)」。
+       VL53L1X 的盲区是 4 厘米，0 毫米一定是无效值，这里两道都挡上。 */
+    if (!tofBow.dataReady()) {
       bowValid = false;
-    } else if (tofBow.ranging_data.range_status == VL53L1X::RangeValid) {
-      bowMm    = d;
-      bowValid = true;
     } else {
-      bowValid = false;
+      uint16_t d = tofBow.read(false);
+      if (tofBow.timeoutOccurred() || d == 0) {
+        bowValid = false;
+      } else if (tofBow.ranging_data.range_status == VL53L1X::RangeValid) {
+        bowMm    = d;
+        bowValid = true;
+      } else {
+        bowValid = false;
+      }
     }
   }
 
 #if TOF_SIDE_ENABLE
   if (sideReady) {
-    uint16_t d = tofSide.read(false);
-    if (tofSide.timeoutOccurred()) {
+    if (!tofSide.dataReady()) {
       sideValid = false;
-    } else if (tofSide.ranging_data.range_status == VL53L1X::RangeValid) {
-      sideMm    = d;
-      sideValid = true;
     } else {
-      sideValid = false;
+      uint16_t d = tofSide.read(false);
+      if (tofSide.timeoutOccurred() || d == 0) {
+        sideValid = false;
+      } else if (tofSide.ranging_data.range_status == VL53L1X::RangeValid) {
+        sideMm    = d;
+        sideValid = true;
+      } else {
+        sideValid = false;
+      }
     }
   }
 #endif
@@ -228,4 +240,45 @@ void tofPrintReport() {
 #if TOF_SIDE_ENABLE
   Serial.printf("激光右舷 : %s\n", tofSideText().c_str());
 #endif
+}
+
+/* ==================== 自检（串口输入 tof 触发） ====================
+   一路读 5 次，每次把「距离 / 状态 / 回波强度 / 环境光」全打出来。
+   为什么要看后面两个数：它们是芯片自己量到的光强，
+     · 超时             → 芯片根本没测完一次，不是"看不到东西"，是它没在干活
+     · 回波强度 ≈ 0     → 光发出去没回来：镜头被挡、保护膜没撕、对着水面或空处
+     · 环境光很大       → 太亮，挪开阳光或射灯
+   "测不到"到底怪谁，看这两个数就分得清了。                                */
+static void tofSelfTestOne(VL53L1X& t, const char* name, bool ready) {
+  Serial.printf("【%s】", name);
+  if (!ready) {
+    Serial.println("没起来：芯片不应答。查 VIN=3.3V、GND 共地、SDA=GPIO21、SCL=GPIO22"
+                   "（右舷那只还要查 XSHUT=GPIO32）");
+    return;
+  }
+
+  Serial.printf("地址 0x%02X，读 5 次：\n", t.getAddress());
+  for (int i = 1; i <= 5; i++) {
+    t.setTimeout(150);
+    uint16_t d = t.read(true);                       // 阻塞读，最多等 150ms
+    if (t.timeoutOccurred())
+      Serial.printf("  %d) 超时：150 毫秒都没测完一次 —— 芯片没在正常测距\n", i);
+    else
+      Serial.printf("  %d) %u mm  状态：%s  回波 %.2f MCPS  环境光 %.2f MCPS\n",
+                    i, (unsigned)d, tofFailReason((uint8_t)t.ranging_data.range_status),
+                    t.ranging_data.peak_signal_count_rate_MCPS,
+                    t.ranging_data.ambient_count_rate_MCPS);
+    delay(60);
+  }
+}
+
+void tofSelfTest() {
+  Serial.println("=========== 激光测距自检 ===========");
+  tofSelfTestOne(tofBow, "船头", bowReady);
+#if TOF_SIDE_ENABLE
+  tofSelfTestOne(tofSide, "右舷", sideReady);
+#else
+  Serial.println("【右舷】未启用（config.h 里 TOF_SIDE_ENABLE = 0）");
+#endif
+  Serial.println("====================================");
 }

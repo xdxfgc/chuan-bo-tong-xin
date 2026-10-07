@@ -16,6 +16,13 @@ static uint8_t s_text[VOICE_TEXT_MAX];
 static size_t  s_len = 0;
 static uint8_t s_volume = 16;
 
+/* 一句话要念多久 —— 发出去之后记在这里，谁想插话先来问 voiceBusy()。
+   s_busyPrio 记的是"正在念的那句有多大分量"（见 voice.h 的三个优先级）：
+   新句子只有优先级更高时才允许打断，否则就得等 —— 这样
+   「落水告警」能顶掉靠泊距离播报，而靠泊播报顶不掉落水。 */
+static uint32_t s_busyUntilMs = 0;
+static uint8_t  s_busyPrio    = 0;
+
 /* ---------------- 文本拼装 ---------------- */
 
 #define VADD(frag) txtAdd((frag), sizeof(frag) - 1)     // 自动去掉结尾的 0x00
@@ -60,7 +67,35 @@ static void txtAddLon(double lon) {
 
 /* ---------------- 发送一帧 ---------------- */
 
-static void voiceSend() {
+/* 估这句话念完要多久：SYN6288 默认语速约每秒 4 个字，也就是一个字 250 毫秒。
+   汉字算 1 个字；GB2312 标点（A3xx，比如逗号）算半个字，它只是换口气；
+   ASCII 的数字算 1 个字（"1.8" 会念成"一点八"，差不多对得上）；
+   开头的音量标签 [v16] 模块不念，跳过。
+   最后整体再加三成余量和 0.4 秒垫底 —— 宁可多等一会儿，也别把话掐了。 */
+static uint32_t estimateSpeechMs() {
+  uint32_t units10 = 0;                 // 以 0.1 个字为单位数，避免浮点
+  size_t   i = 0;
+
+  if (s_len >= 2 && s_text[0] == '[') { // 跳过开头的 [v16]
+    while (i < s_len && s_text[i] != ']') i++;
+    if (i < s_len) i++;
+  }
+
+  for (; i < s_len; i++) {
+    if (s_text[i] == 0xA3 && i + 1 < s_len) { units10 += 5;  i++; }   // 中文标点
+    else if (s_text[i] < 0x80)              { units10 += 10; }        // 数字、小数点
+    else                                    { units10 += 10; i++; }   // 汉字（两字节）
+  }
+
+  /* 一个字按 300 毫秒算（原来 250），再垫 1 秒（原来 0.4 秒）。
+     实测 250 毫秒估得偏短：数字和标点的停顿比按字数算出来的长，
+     结果下一句还是抢在前头。宁可多等一会儿，也别把话掐了。      */
+  uint32_t ms = units10 * 30;
+  return ms + 1000;
+}
+
+/* prio：这句话的分量，默认按"告警级"算，距离播报和落水另行指定 */
+static void voiceSend(uint8_t prio = VOICE_PRIO_ALARM) {
   if (s_len == 0) return;
 
   uint8_t  frame[VOICE_TEXT_MAX + 8];
@@ -84,7 +119,13 @@ static void voiceSend() {
   delay(20);
   int ack = -1;
   while (SynSerial.available()) ack = SynSerial.read();
-  Serial.printf("[语音] 发送 %u 字节%s\n", (unsigned)s_len,
+
+  /* 记住"念到什么时候"，顺便把估算值打出来，方便现场对语速 */
+  uint32_t ms = estimateSpeechMs();
+  s_busyPrio    = prio;
+  s_busyUntilMs = millis() + ms;
+
+  Serial.printf("[语音] 发送 %u 字节，预计念 %.1f 秒%s\n", (unsigned)s_len, ms / 1000.0,
                 ack < 0 ? "" : (ack == 0x41 ? "  模块应答 OK" : "  应答异常"));
 }
 
@@ -101,6 +142,19 @@ void voiceSetVolume(uint8_t v) {
 }
 
 uint8_t voiceVolume() { return s_volume; }
+
+/* 现在还有话没念完吗？（按估算的时长判断，误差半秒左右）
+   想插话的模块先来问这一句：靠泊距离播报问到"忙"就跳过这一轮，
+   等下一轮报最新的距离；告警则用下面那个问"正在念的是不是告警"。 */
+bool voiceBusy() {
+  return (int32_t)(s_busyUntilMs - millis()) > 0;
+}
+
+/* 正在念的那句有多重要（0 = 没人念）：
+   想插话的模块拿它跟自己的优先级比，比自己高就得让，比自己低就能打断。 */
+uint8_t voiceBusyPrio() {
+  return voiceBusy() ? s_busyPrio : 0;
+}
 
 void voiceSpeakTest() {
   txtReset();
@@ -146,7 +200,7 @@ void voiceAnnounce(bool haveDir, double tLat, double tLon, float distM, int sect
   txtAddLat(tLat);
   txtAddLon(tLon);
   if (!haveDir) VADD(GB_SELF_NOPOS);
-  voiceSend();
+  voiceSend(VOICE_PRIO_SOS);    // 人员落水：最高优先级，可以顶掉靠泊播报
 }
 
 void voiceSpeakTargetNoPos() {
@@ -160,14 +214,14 @@ void voiceSpeakLinkLost() {
   txtReset();
   txtAddVolume();
   VADD(GB_LINK_LOST);
-  voiceSend();
+  voiceSend(VOICE_PRIO_SOS);    // 信标失联：搜救相关，同样最高
 }
 
 void voiceSpeakLinkBack() {
   txtReset();
   txtAddVolume();
   VADD(GB_LINK_BACK);
-  voiceSend();
+  voiceSend(VOICE_PRIO_SOS);
 }
 
 /* ---------------- 靠泊辅助 ---------------- */
@@ -184,37 +238,46 @@ static void txtAddDistance(float d) {
   }
 }
 
-void voiceSpeakBerthEnter(float distM) {
+/* 先说这一句是哪一路测出来的：右舷那只念“右侧”，船头那只念“前方”。
+   两路说的是同一件事，靠泊时人不用回头看屏幕也能分清方向。 */
+static void txtAddSource(bool side) {
+  VADD(side ? GB_STARBOARD : GB_AHEAD);
+}
+
+void voiceSpeakBerthEnter(float distM, bool side) {
   txtReset();
   txtAddVolume();
   VADD(GB_BERTH_WATCH);
+  txtAddSource(side);
   txtAddDistance(distM);
   voiceSend();
 }
 
-void voiceSpeakBerthDistance(float distM, bool soon) {
+void voiceSpeakBerthDistance(float distM, bool soon, bool side) {
   txtReset();
   txtAddVolume();
+  txtAddSource(side);
   txtAddDistance(distM);
   if (soon) VADD(GB_SOON_DOCK);
-  voiceSend();
+  voiceSend(VOICE_PRIO_DIST);   // 靠泊距离播报：优先级最低，谁都能顶掉它
 }
 
-void voiceSpeakBerthAlarm(uint8_t code) {
+void voiceSpeakBerthAlarm(uint8_t code, bool side) {
   txtReset();
   txtAddVolume();
   switch (code) {
-    case 0x01: VADD(GB_ALM_SPEED_HI);  break;
-    case 0x02: VADD(GB_ALM_SPEED_MAX); break;
-    case 0x03: VADD(GB_ALM_TOO_NEAR);  break;
+    case 0x01: txtAddSource(side); VADD(GB_ALM_SPEED_HI);  break;
+    case 0x02: txtAddSource(side); VADD(GB_ALM_SPEED_MAX); break;
+    case 0x03: txtAddSource(side); VADD(GB_ALM_TOO_NEAR);  break;
     default: return;
   }
-  voiceSend();
+  voiceSend(VOICE_PRIO_ALARM);  // 告警：能顶掉距离播报，顶不掉落水
 }
 
-void voiceSpeakBerthDone() {
+void voiceSpeakBerthDone(bool side) {
   txtReset();
   txtAddVolume();
+  txtAddSource(side);
   VADD(GB_BERTH_DONE);
   voiceSend();
 }

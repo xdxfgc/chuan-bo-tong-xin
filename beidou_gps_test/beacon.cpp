@@ -142,6 +142,14 @@ static void maybeAnnounce() {
      复位，所以信标重新上线（新事件）之后照样会报警。               */
   if (s_acked) return;
 
+  /* 落水是最高优先级：正在念的如果只是靠泊那种播报（距离 1 级、告警 2 级），
+     直接顶掉它，人的安全最重要。只有正在念同为 3 级的话才等一等，
+     免得两句话互相掐。
+
+     为什么不用"voiceBusy() 就等着"：靠泊时距离播报每 3 秒一句、每句占线 3 秒，
+     语音几乎一直忙，落水那句话会永远排不上队 —— 之前就是这么哑掉的。 */
+  if (voiceBusyPrio() >= VOICE_PRIO_SOS) return;
+
   if (s_announced && (millis() - s_lastAnnounceMs < ANNOUNCE_MIN_GAP_MS)) return;
 
   bool first     = !s_announced;

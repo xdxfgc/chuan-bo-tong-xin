@@ -16,6 +16,7 @@
 void     tofBegin();            // 初始化 I2C 与传感器
 void     tofUpdate();           // 周期调用：按间隔读取一次距离
 void     tofPrintReport();      // 打印两行距离
+void     tofSelfTest();         // 串口命令 tof：两路各读 5 次，打印状态与回波强度
 
 bool     tofIsReady();          // 船头那只是否初始化成功
 bool     tofIsValid();          // 船头本次读数是否有效

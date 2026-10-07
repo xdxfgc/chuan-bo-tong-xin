@@ -137,6 +137,8 @@ static void judge(unsigned long now) {
   }
 
   if (want != s_alarm) {
+    /* 正在念同级（别的告警）或更高级（落水）就等一等；只是距离播报就直接顶掉。 */
+    if (voiceBusyPrio() >= VOICE_PRIO_ALARM) return;
     s_alarm = want;
     s_lastAnnounceMs = now;
     if      (want == 0x22) voiceSpeakAnchorDragging();
@@ -149,6 +151,7 @@ static void judge(unsigned long now) {
 
   // 告警持续时定期重播，免得漏听
   if (s_alarm != 0x00 && (now - s_lastAnnounceMs >= ANCHOR_REPEAT_MS)) {
+    if (voiceBusyPrio() >= VOICE_PRIO_ALARM) return;
     s_lastAnnounceMs = now;
     if      (s_alarm == 0x22) voiceSpeakAnchorDragging();
     else if (s_alarm == 0x21) voiceSpeakAnchorSuspect(s_drift, dirSector(s_driftDir));
