@@ -9,6 +9,7 @@
 #include "tof.h"
 #include "oled.h"
 #include "logbook.h"
+#include "voice.h"      // 网页上的语音信息栏与音量控制
 
 static WebServer server(WEB_PORT);
 static unsigned long lastWifiTry = 0;
@@ -75,6 +76,7 @@ static const char INDEX_HTML[] = R"HTML(
   table.tbl td.ok{color:#7ee2a8}
   table.tbl td.bad{color:#ff9b9b}
   table.tbl td.empty{color:var(--dim);text-align:center}
+  .vinfo{display:inline-block;margin-left:10px;color:var(--dim);font-size:13px;line-height:36px}
 </style>
 </head>
 <body>
@@ -82,6 +84,12 @@ static const char INDEX_HTML[] = R"HTML(
   <h1>岸基节点（参考站）</h1>
   <p class="sub">北斗定位 · LoRa 信标接收 · 船岸链路 · 岸端参考基准</p>
   <div class="banner" id="banner">正在等待数据…</div>
+  <div>
+    <button class="btn" onclick="volStep(-2)">音量 −</button>
+    <button class="btn" onclick="volStep(2)">音量 +</button>
+    <button class="btn" onclick="voiceTest()">试听</button>
+    <span class="vinfo" id="vinfo">语音：--</span>
+  </div>
   <div class="tabs">
     <button class="tab" data-t="all" onclick="showTab('all')">全部</button>
     <button class="tab on" data-t="1" onclick="showTab('1')">① 本节点定位</button>
@@ -251,6 +259,10 @@ async function tick(){
     document.getElementById('chrssi').textContent= d.loraReady ? (d.chRssi + ' dBm') : '--';
     document.getElementById('oled').textContent   = d.oled;
     document.getElementById('tof').textContent    = d.tof;
+    document.getElementById('vinfo').textContent  = '语音：音量 ' + d.vol + '/16 · '
+      + (d.voiceBusy ? ('正在念（还剩 ' + (d.voiceLeftMs / 1000).toFixed(1) + ' 秒）') : '空闲')
+      + (d.voiceCount ? (' · 最近：' + d.voiceLast + '（' + d.voiceAgo + ' 秒前）') : ' · 还没播过')
+      + (d.voiceSkip ? (' · 等不上的跳过 ' + d.voiceSkip + ' 次') : '');
 
     document.getElementById('blink').textContent  = d.bLink ? ('在线 ' + d.bRssi + ' dBm') : '离线';
     document.getElementById('bstate').textContent = d.bHas ? (d.bValid ? '定位有效' : '未定位') : '未收到';
@@ -484,6 +496,17 @@ function clearLog(){
   document.getElementById('pbInfo').textContent = '已清空。';
 }
 
+/* ---------------- 音量与试听 ---------------- */
+async function volStep(d){
+  const cur = (lastData && typeof lastData.vol === 'number') ? lastData.vol : 16;
+  const v = Math.max(0, Math.min(16, cur + d));
+  try{ await fetch('/vol?v=' + v, {cache:'no-store'}); }catch(e){}
+  tick();
+}
+async function voiceTest(){
+  try{ await fetch('/vol?test=1', {cache:'no-store'}); }catch(e){}
+}
+
 /* ---------------- 数据回放 ----------------
    CSV 列顺序（和 logbook.cpp 的表头一致）：
    0 t_ms 1 time 2 node_lat 3 node_lon 4 node_sats 5 node_hdop 6 node_fix 7 tof_mm
@@ -579,6 +602,15 @@ static String buildJson() {
   j += ",\"chRssi\":";     j += loraChannelRssi();
   j += ",\"oled\":\"";     j += escapeJson(String(oledStatusText())); j += "\"";
   j += ",\"tof\":\"";      j += escapeJson(tofText()); j += "\"";
+
+  /* 语音播报信息：音量、在不在念、刚才念的是什么、跳过了几次 */
+  j += ",\"vol\":";         j += voiceVolume();
+  j += ",\"voiceBusy\":";   j += (voiceBusy() ? "true" : "false");
+  j += ",\"voiceLeftMs\":"; j += voiceBusyLeftMs();
+  j += ",\"voiceLast\":\""; j += escapeJson(String(voiceLastLabel())); j += "\"";
+  j += ",\"voiceAgo\":";    j += (voiceLastMs() ? (millis() - voiceLastMs()) / 1000UL : 0UL);
+  j += ",\"voiceCount\":";  j += voiceCount();
+  j += ",\"voiceSkip\":";   j += voiceSkipCount();
 
   j += ",\"bLink\":";   j += (b.linkUp ? "true" : "false");
   j += ",\"bHas\":";    j += (b.has ? "true" : "false");
@@ -802,6 +834,17 @@ void netBegin() {
     server.send(200, "text/plain; charset=utf-8", "ok");
   });
   server.on("/log", handleLogCSV);
+  /* 音量与试听：/vol?v=8 设音量；/vol?test=1 念一句“你好”试听 */
+  server.on("/vol", []() {
+    if (server.hasArg("v")) {
+      int v = server.arg("v").toInt();
+      if (v < 0)  v = 0;
+      if (v > 16) v = 16;
+      voiceSetVolume((uint8_t)v);
+    }
+    if (server.hasArg("test")) voiceSpeakTest();
+    server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
+  });
   server.on("/logctl", []() {
     String op = server.arg("op");
     if      (op == "on")    logbookSetOn(true);

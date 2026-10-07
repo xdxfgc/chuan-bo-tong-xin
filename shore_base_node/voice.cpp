@@ -19,6 +19,19 @@ static uint8_t s_text[VOICE_TEXT_MAX];
 static size_t  s_len = 0;
 static uint8_t s_volume = 16;
 
+/* 一句话要念多久 —— 发出去之后记在这里，谁想插话先来问 voiceBusy()。
+   s_busyPrio 记的是"正在念的那句有多大分量"（见 voice.h 的三个优先级）：
+   新句子只有优先级更高时才允许打断，否则就得让路。
+   和船端是同一套实现，两边行为保持一致。                        */
+static uint32_t s_busyUntilMs = 0;
+static uint8_t  s_busyPrio    = 0;
+
+/* 语音状态（网页显示用） */
+static const char* s_lastLabel = "";
+static uint32_t    s_lastMs    = 0;
+static uint32_t    s_count     = 0;
+static uint32_t    s_skipCount = 0;
+
 /* ---------------- 文本拼装 ---------------- */
 
 #define VADD(frag) txtAdd((frag), sizeof(frag) - 1)     // 自动去掉结尾的 0x00
@@ -63,7 +76,28 @@ static void txtAddLon(double lon) {
 
 /* ---------------- 发送一帧 ---------------- */
 
-static void voiceSend() {
+/* 估这句话念完要多久：SYN6288 默认语速约每秒 4 个字，一个字 300 毫秒，
+   再垫 1 秒余量（和船端一致 —— 宁可多等一会儿，也别把话掐了）。 */
+static uint32_t estimateSpeechMs() {
+  uint32_t units10 = 0;                 // 以 0.1 个字为单位数，避免浮点
+  size_t   i = 0;
+
+  if (s_len >= 2 && s_text[0] == '[') { // 跳过开头的 [v16]
+    while (i < s_len && s_text[i] != ']') i++;
+    if (i < s_len) i++;
+  }
+
+  for (; i < s_len; i++) {
+    if (s_text[i] == 0xA3 && i + 1 < s_len) { units10 += 5;  i++; }   // 中文标点
+    else if (s_text[i] < 0x80)              { units10 += 10; }        // 数字、小数点
+    else                                    { units10 += 10; i++; }   // 汉字（两字节）
+  }
+
+  return units10 * 30 + 1000;
+}
+
+/* prio  ：这句话的分量；label：这句话叫什么（只给网页显示用） */
+static void voiceSend(uint8_t prio = VOICE_PRIO_ALARM, const char* label = "") {
   if (s_len == 0) return;
 
   uint8_t  frame[VOICE_TEXT_MAX + 8];
@@ -87,7 +121,16 @@ static void voiceSend() {
   delay(20);
   int ack = -1;
   while (SynSerial.available()) ack = SynSerial.read();
-  Serial.printf("[语音] 发送 %u 字节%s\n", (unsigned)s_len,
+
+  /* 记住"念到什么时候"，顺便把估算值打出来，方便现场对语速 */
+  uint32_t ms = estimateSpeechMs();
+  s_busyPrio    = prio;
+  s_busyUntilMs = millis() + ms;
+  s_lastLabel   = (label && *label) ? label : "播报";
+  s_lastMs      = millis();
+  s_count++;
+
+  Serial.printf("[语音] 发送 %u 字节，预计念 %.1f 秒%s\n", (unsigned)s_len, ms / 1000.0,
                 ack < 0 ? "" : (ack == 0x41 ? "  模块应答 OK" : "  应答异常"));
 }
 
@@ -105,18 +148,37 @@ void voiceSetVolume(uint8_t v) {
 
 uint8_t voiceVolume() { return s_volume; }
 
+bool voiceBusy() {
+  return (int32_t)(s_busyUntilMs - millis()) > 0;
+}
+
+uint8_t voiceBusyPrio() {
+  return voiceBusy() ? s_busyPrio : 0;
+}
+
+uint32_t voiceBusyLeftMs() {
+  int32_t left = (int32_t)(s_busyUntilMs - millis());
+  return (left > 0) ? (uint32_t)left : 0;
+}
+
+const char* voiceLastLabel() { return (s_lastLabel && *s_lastLabel) ? s_lastLabel : "--"; }
+uint32_t    voiceLastMs()     { return s_lastMs; }
+uint32_t    voiceCount()      { return s_count; }
+uint32_t    voiceSkipCount()  { return s_skipCount; }
+void        voiceNoteSkip()   { s_skipCount++; }
+
 void voiceSpeakTest() {
   txtReset();
   txtAddVolume();
   VADD(GB_HELLO);
-  voiceSend();
+  voiceSend(VOICE_PRIO_ALARM, "试听 你好");
 }
 
 void voiceSpeakStartup() {
   txtReset();
   txtAddVolume();
   VADD(GB_STARTUP);
-  voiceSend();
+  voiceSend(VOICE_PRIO_ALARM, "开机提示");
 }
 
 void voiceAnnounce(bool haveDir, double tLat, double tLon, float distM, int sector) {
@@ -145,26 +207,26 @@ void voiceAnnounce(bool haveDir, double tLat, double tLon, float distM, int sect
   txtAddLat(tLat);
   txtAddLon(tLon);
   if (!haveDir) VADD(GB_SELF_NOPOS);
-  voiceSend();
+  voiceSend(VOICE_PRIO_SOS, "人员落水");
 }
 
 void voiceSpeakTargetNoPos() {
   txtReset();
   txtAddVolume();
   VADD(GB_TARGET_NOPOS);
-  voiceSend();
+  voiceSend(VOICE_PRIO_ALARM, "信标未定位");
 }
 
 void voiceSpeakLinkLost() {
   txtReset();
   txtAddVolume();
   VADD(GB_LINK_LOST);
-  voiceSend();
+  voiceSend(VOICE_PRIO_SOS, "信标失联");
 }
 
 void voiceSpeakLinkBack() {
   txtReset();
   txtAddVolume();
   VADD(GB_LINK_BACK);
-  voiceSend();
+  voiceSend(VOICE_PRIO_SOS, "通信恢复");
 }

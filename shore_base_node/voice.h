@@ -33,4 +33,21 @@ void voiceSpeakTargetNoPos();      // 信标未定位
 void voiceSpeakLinkLost();         // 与信标失去联系
 void voiceSpeakLinkBack();         // 通信已恢复
 
+/* ---------------- 播报优先级 ----------------
+   和船端同一套：数字大的可以打断数字小的，小的必须等或干脆让路。
+   岸基没有靠泊播报，所以实际只用到 2 和 3 两档。            */
+#define VOICE_PRIO_DIST   1     // 保留（岸基用不到）
+#define VOICE_PRIO_ALARM  2     // 信标未定位、试听、开机提示
+#define VOICE_PRIO_SOS    3     // 人员落水、信标失联/恢复：最高
+
+/* ---------------- 语音状态（给网页显示用） ---------------- */
+bool        voiceBusy();           // 还有话没念完（按字数估算）
+uint8_t     voiceBusyPrio();       // 正在念的那句的优先级（0 = 没在念）
+uint32_t    voiceBusyLeftMs();     // 预计还要念多久（毫秒）
+const char* voiceLastLabel();      // 最近一次播报的名称（UTF-8）
+uint32_t    voiceLastMs();         // 最近一次播报的时刻（millis）
+uint32_t    voiceCount();          // 累计播报条数
+uint32_t    voiceSkipCount();      // 因为"上一句没念完"被跳过的次数
+void        voiceNoteSkip();       // 调用方跳过一条播报时记一次
+
 #endif

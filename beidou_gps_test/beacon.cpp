@@ -207,6 +207,9 @@ void beaconOnPacket(const TargetPacket& pkt) {
                 pkt.lat, pkt.lon, pkt.rssi, pkt.snr);
 
   if (wasDown && s_announced) voiceSpeakLinkBack();
+  /* 链路恢复 = 上一次事件已经过去（信标睡过一觉或漂远过），
+     播报状态清零，万一马上又落水，按新事件立刻重新播报。 */
+  if (wasDown) s_announced = false;
 
   refreshGeo();
 
@@ -219,6 +222,20 @@ void beaconOnPacket(const TargetPacket& pkt) {
        这半分钟里信标发的是 P,0,0,0 —— 如果报警还要求坐标有效，
        那最该报警的半分钟反而不响。方位距离等北斗定上位了自然会出来。 */
   bool waterAlarm = pkt.hasWater ? pkt.waterOn : s_targetValid;
+
+  /* ---- 本次落水事件结束的判据：已确认过 + 信标这一帧报"没水" ----
+     人已经离开水面了。把"已确认"和"已播报过"都清掉，
+     这样下次真的再落水，能当成一个**新事件**立刻重新报警。
+
+     为什么必须这么改：信标平时一直发心跳（8 秒一帧），链路根本不会断，
+     而 s_acked 以前只在"链路失联"时才复位 —— 结果确认过一次之后，
+     同一个信标整场演示只会响一次，除非重启板子。                  */
+  if (s_acked && pkt.hasWater && !pkt.waterOn) {
+    s_acked       = false;
+    s_alarmActive = false;
+    s_announced   = false;                 // 下次落水按"首次"处理，立刻播报
+    Serial.println("[信标] 已离水，本次落水事件结束（再落水会重新报警）");
+  }
 
   if (waterAlarm) {
     // 落水告警：置位后保持，直到人工确认；确认后同一个事件不再重复触发
@@ -251,7 +268,10 @@ void beaconUpdate() {
   // 设成「比本轮 now 还新」的时刻，用旧值相减会变成无符号下溢，刚收到包就被误判。
   if (s_linkUp && (millis() - s_lastPacketMs > LINK_LOST_MS)) {
     s_linkUp = false;
-    s_acked  = false;          // 失联视为本次事件结束，之后恢复可重新报警
+    /* 失联视为本次事件结束：确认标志和播报状态都清零，
+       信标重新上线后按新事件处理（不然恢复之后可能因为"已播报过"而漏报）。 */
+    s_acked     = false;
+    s_announced = false;
     Serial.println("[链路] 超过 15 秒没收到信标，播报失去联系");
     voiceSpeakLinkLost();
   }

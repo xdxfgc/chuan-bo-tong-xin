@@ -129,6 +129,10 @@ static bool s_acked = false;
 static void maybeAnnounceBeacon(int slot) {
   if (s_acked) return;                        // 已经人工确认过，别再吵
 
+  /* 上一句还没念完就先别说 —— 正在念同为 3 级（落水/失联）的话才等，
+     别的低级别播报可以顶掉。信标每 2 秒还会再发一帧，下个包自然会重试。 */
+  if (voiceBusyPrio() >= VOICE_PRIO_SOS) return;
+
   TrackTarget& t = s_beacons[slot];
   AnnState&    a = s_ann[slot];
 
@@ -263,16 +267,31 @@ void trackOnPacket(const LoraPacket& pkt) {
   refreshGeo(t);
 
   if (wasDown && a.announced && !s_acked) voiceSpeakLinkBack();
+  /* 链路恢复 = 上次事件已经过去，播报状态清零：
+     万一马上又落水，按新事件重新播报。 */
+  if (wasDown) a.announced = false;
 
   /* 报警条件 = 坐标有效 + 水感确认导通。
      信标现在一直发（链路随时在线），光看"收到坐标"会一直响；
      真正的触发条件是帧里那个水感位。老格式帧没这个字段，退回原行为。 */
   bool waterAlarm = t.valid && t.waterOn;
 
+  /* 本次落水事件结束：已确认过 + 这一帧报"没水"（人离开水面了）。
+     清掉"已确认"和"已播报过"，下次再落水当成新事件重新报警 ——
+     信标平时一直发心跳、链路不断，只在失联时复位的话整场只会响一次。 */
+  if (s_acked && t.hasWater && !t.waterOn) {
+    s_acked         = false;
+    a.announced     = false;      // 下次落水按首次处理
+    a.reportedNoFix = false;
+    Serial.printf("[信标 %d] 已离水，本次落水事件结束（再落水会重新报警）\n", t.id);
+  }
+
   if (waterAlarm) {
     a.reportedNoFix = false;
     maybeAnnounceBeacon(slot);
   } else if (!t.valid && !a.reportedNoFix) {
+    /* 上一句没念完就再等一轮，下个包再报（这句是一次性的，不能丢） */
+    if (voiceBusy()) { voiceNoteSkip(); return; }
     a.reportedNoFix = true;
     if (!s_acked) voiceSpeakTargetNoPos();
   }
