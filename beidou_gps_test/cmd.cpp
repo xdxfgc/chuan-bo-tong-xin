@@ -11,6 +11,7 @@
 #include "logbook.h"
 #include "tof.h"
 #include "ownpos.h"
+#include "motor.h"
 
 static char   s_buf[32];
 static size_t s_n = 0;
@@ -29,6 +30,8 @@ static void printHelp() {
   Serial.println("  pos         看本船位置来源（北斗 / 手动）");
   Serial.println("  pos 26.212676,111.599388   室内演示：手动填本船坐标");
   Serial.println("  pos auto    切回北斗定位");
+  Serial.println("  motor 0.5   电机前进 50%（-1~1，负数是倒车）");
+  Serial.println("  motor stop  电机滑行停；motor brake 刹车；motor 看状态");
   Serial.println("  ack         确认落水告警（停止蜂鸣器）");
   Serial.println("  buzz on/off 打开或关闭蜂鸣器");
   Serial.println("  moor set    把当前位置设为锚泊基准，开始走锚监测");
@@ -75,6 +78,8 @@ static void runCmd(char* cmd) {
   if (low == "tof" || low == "laser") { tofSelfTest(); return; }
 
   if (low.startsWith("pos")) { Serial.println(ownPosCmd(s.substring(3))); return; }
+
+  if (low.startsWith("motor")) { Serial.println(motorCmd(s.substring(5))); return; }
 
   if (low == "ack") { buzzerAcknowledge(); return; }
 

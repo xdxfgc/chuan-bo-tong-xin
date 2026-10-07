@@ -48,6 +48,7 @@
 #include "beacon.h"
 #include "shore.h"
 #include "net.h"
+#include "motor.h"      // TB6612 电机驱动
 
 /* LoRa 统一轮询：收一包按帧类型分发
      M     —— 落水信标 → beacon 模块（告警、播报、回 ACK）
@@ -95,6 +96,7 @@ void setup() {
   buttonBegin();  // 板载 BOOT 按键
   loraBegin();    // LoRa（失败会在 beaconUpdate 里每 2 秒重试）
   voiceBegin();   // 语音串口
+  motorBegin();   // 电机驱动（上电即停止）
   beaconBegin();  // 信标状态
   netBegin();     // WiFi + 网页服务
 
@@ -111,6 +113,7 @@ void loop() {
   cmdPoll();           // 串口命令：音量 / 标定 / 出发点 / 磁偏角
   cmdPollEvents();     // 标定进度与结束提示
   buttonUpdate();      // 板载按键（短按设出发点、长按标定）
+  motorUpdate();       // 电机：斜坡、换向保护、输出到 TB6612
 
   gpsUpdate();         // 读定位并解析
   tofUpdate();         // 读激光测距

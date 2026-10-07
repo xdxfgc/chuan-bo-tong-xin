@@ -289,6 +289,40 @@ static const uint32_t DBG_BAUD = 115200;
 #define BUZZER_PIN    33
 #define BUZZER_ACTIVE_LOW 0    // 1 = MH-FMD（低电平触发）  0 = MH-FMG（高电平触发）
 
+/* ---------------- TB6612 电机驱动（单路，A 通道） ----------------
+   STBY 常开（直接接 3.3V），所以单片机只管 3 根线：
+
+     TB6612          ESP32
+     AIN1     ->     GPIO2
+     AIN2     ->     GPIO15
+     PWMA     ->     GPIO12      （LEDC 调速，5kHz）
+     STBY     ->     3.3V        （常开，不用控制）
+     VCC      ->     3.3V        （逻辑供电）
+     VM       ->     电池正极     （电机电源 2.5~13.5V）
+     GND      ->     GND         （必须和 ESP32 共地）
+     AOUT1/2  ->     电机两极
+
+   ⚠ 三条硬规矩：
+     1) 电机电源和 ESP32 分开供、只共地。电机启动电流能到 1~2A，
+        共用一路会直接把 ESP32 拉复位。
+     2) VM 就近并 470µF 电解 + 0.1µF 陶瓷，吸掉换向火花和峰值。
+     3) GPIO2 和 GPIO12 是启动配置脚，上电瞬间要是低电平 ——
+        这两根线上**不要外接上拉电阻**（TB6612 的输入是高阻，本身没问题）。
+
+   引脚不够时的两个腾法（写在 README 里）：
+     · 语音 BY 从 GPIO5 挪到 GPIO34/35/36/39（只读脚）
+     · 右舷激光不用时 TOF_SIDE_ENABLE 改 0，释放 GPIO32            */
+#define MOTOR_ENABLE 1
+static const int MOTOR_AIN1_PIN = 2;
+static const int MOTOR_AIN2_PIN = 15;
+static const int MOTOR_PWM_PIN  = 12;
+
+static const uint32_t MOTOR_PWM_HZ    = 5000;    // 5kHz：电机平顺、耳朵也听不见
+static const uint8_t  MOTOR_PWM_BITS  = 8;       // 占空比 0~255
+static const float    MOTOR_DEADBAND  = 0.06f;   // 油门小于这个就当停车（免得起转嗡嗡响）
+static const float    MOTOR_RAMP_PS   = 0.80f;   // 每秒最多变化多少油门（软启动/软停）
+static const uint32_t MOTOR_REV_GAP_MS = 300;    // 换向前先停稳这么久，保护 H 桥和电机
+
 /* ---------------- 走锚监测（锚泊位移监测） ----------------
    靠好或抛锚稳定后，用网页上的“设基准”按钮把当前位置记为原点，之后持续监测位移。
    判定按文档附录 B：

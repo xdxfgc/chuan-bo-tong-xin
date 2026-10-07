@@ -15,6 +15,7 @@
 #include "anchor.h"
 #include "logbook.h"
 #include "voice.h"      // 网页上的语音信息与音量控制
+#include "motor.h"      // 网页上的电机控制
 
 static WebServer server(WEB_PORT);
 static unsigned long lastWifiTry = 0;
@@ -111,6 +112,7 @@ background:#1a232e;color:var(--dim);font-size:14px;cursor:pointer}
 <button class="tab" data-t="7" onclick="showTab('7')">⑦ 原始数据</button>
 <button class="tab" data-t="8" onclick="showTab('8')">⑧ 数据记录</button>
 <button class="tab" data-t="9" onclick="showTab('9')">⑨ 岸基</button>
+<button class="tab" data-t="10" onclick="showTab('10')">⑩ 电机</button>
 </div>
 <section class="pane" data-p="1" style="display:block">
 <h2>① 北斗定位</h2>
@@ -242,6 +244,29 @@ style="width:100%;margin:6px 0 12px" oninput="showRec(this.value)">
 <p class="sub">岸基节点固定在码头上，每 2 秒广播一条 R 参考帧。
 船在远处时靠它就知道离码头还有多远（激光只能看 4 米）。岸基只做参考点，不告警不播报。</p>
 </section>
+
+<section class="pane" data-p="10">
+<h2>⑩ 电机（TB6612）</h2>
+<div class="grid">
+<div class="card"><div class="k">驱动状态</div><div class="v small" id="mstate">--</div></div>
+<div class="card"><div class="k">目标油门</div><div class="v" id="mtgt">--</div></div>
+<div class="card"><div class="k">实际输出</div><div class="v" id="mout">--</div></div>
+</div>
+<p class="sub">油门 -100% ~ +100%，负数是倒车。松手才生效；软启动约 1.3 秒到全速，
+换向会先停稳 0.3 秒保护 H 桥。上电默认停止。</p>
+<div class="bar">
+<input type="range" id="mthr" min="-100" max="100" value="0" step="5"
+ style="width:100%" onchange="setMotor(this.value)">
+</div>
+<div class="bar">
+<button class="btn" onclick="motorGo(60)">前进 60%</button>
+<button class="btn" onclick="motorGo(-40)">倒车 40%</button>
+<button class="btn" onclick="motorAct('stop')">滑行停</button>
+<button class="btn" onclick="motorAct('estop')">急停</button>
+</div>
+<p class="sub">⚠ 螺旋桨转起来以后别用手碰；第一次测试先把船架起来或者按住船体。
+急停 = 油门清零并刹车，比"滑行停"停得快。</p>
+</section>
 </div>
 <script>
 async function tick(){
@@ -274,6 +299,13 @@ document.getElementById('vinfo').textContent = '语音：音量 ' + d.vol + '/16
 + (d.voiceBusy ? ('正在念（还剩 ' + (d.voiceLeftMs / 1000).toFixed(1) + ' 秒）') : '空闲')
 + (d.voiceCount ? (' · 最近：' + d.voiceLast + '（' + d.voiceAgo + ' 秒前）') : ' · 还没播过')
 + (d.voiceSkip ? (' · 等不上的跳过 ' + d.voiceSkip + ' 次') : '');
+document.getElementById('mstate').textContent = d.motorReady ? d.motorState : '未启用';
+document.getElementById('mtgt').textContent   = d.motorReady ? ((d.motorTarget * 100).toFixed(0) + '%') : '--';
+document.getElementById('mout').textContent   = d.motorReady ? ((d.motorOut * 100).toFixed(0) + '%') : '--';
+{
+const ms = document.getElementById('mthr');
+if(ms && document.activeElement !== ms) ms.value = Math.round(d.motorTarget * 100);
+}
 document.getElementById('lat').textContent   = d.valid ? d.lat.toFixed(6)+'° N' : '--';
 document.getElementById('lon').textContent   = d.valid ? d.lon.toFixed(6)+'° E' : '--';
 document.getElementById('alt').textContent   = d.valid ? d.alt.toFixed(1)+' m' : '--';
@@ -493,6 +525,19 @@ tick();
 }
 async function voiceTest(){
 try{ await fetch('/vol?test=1', {cache:'no-store'}); }catch(e){}
+}
+async function setMotor(v){
+try{ await fetch('/motor?t=' + (v / 100), {cache:'no-store'}); }catch(e){}
+tick();
+}
+async function motorGo(pct){
+const ms = document.getElementById('mthr');
+if(ms) ms.value = pct;
+setMotor(pct);
+}
+async function motorAct(op){
+try{ await fetch('/motor?op=' + op, {cache:'no-store'}); }catch(e){}
+tick();
 }
 function showTab(t){
 document.querySelectorAll('.pane').forEach(function(p){
@@ -796,6 +841,12 @@ static String buildJson() {
   j += ",\"voiceSkip\":";   j += voiceSkipCount();
   j += ",\"voicePrio\":";   j += voiceBusyPrio();
 
+  /* 电机（TB6612）：状态、目标油门、实际输出 */
+  j += ",\"motorReady\":";   j += (motorReady() ? "true" : "false");
+  j += ",\"motorState\":\""; j += escapeJson(String(motorStateText())); j += "\"";
+  snprintf(num, sizeof(num), "%.2f", motorTarget()); j += ",\"motorTarget\":"; j += num;
+  snprintf(num, sizeof(num), "%.2f", motorOutput()); j += ",\"motorOut\":"; j += num;
+
   j += ",\"magOk\":";       j += (magPresent() ? "true" : "false");
   j += ",\"magCal\":";      j += (magCalibrated() ? "true" : "false");
   snprintf(num, sizeof(num), "%.1f", magHeadingDeg()); j += ",\"heading\":"; j += num;
@@ -991,6 +1042,17 @@ void netBegin() {
       voiceSetVolume((uint8_t)v);
     }
     if (server.hasArg("test")) voiceSpeakTest();
+    server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
+  });
+  /* 电机：/motor?t=0.6 设油门（-1~1）；/motor?op=stop|brake|estop */
+  server.on("/motor", []() {
+    if (server.hasArg("t")) motorSetThrottle(server.arg("t").toFloat());
+    if (server.hasArg("op")) {
+      String op = server.arg("op");
+      if      (op == "stop")  motorStop();
+      else if (op == "brake") motorBrake();
+      else if (op == "estop") motorEmergencyStop();
+    }
     server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
   });
   /* 本船位置来源：/pos?lat=..&lon=.. 设手动坐标；/pos?mode=auto 切回北斗 */
