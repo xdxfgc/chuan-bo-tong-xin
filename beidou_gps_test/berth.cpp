@@ -10,6 +10,7 @@
 #include "berth.h"
 #include "tof.h"
 #include "voice.h"
+#include "beacon.h"     // 落水告警期间靠泊语音让位，需要 beaconAlarmActive()
 
 #if BERTH_ENABLE
 
@@ -156,6 +157,14 @@ static void updateAlarm() {
    这两句错过就没了，所以策略是"等"而不是"跳过"：上一句没念完就再等下一轮。 */
 static void berthFlushPending() {
   if (!s_pendingEnter && !s_pendingDone) return;
+
+  /* 落水告警没确认期间，靠泊的话一律不说。
+     这时候"靠妥/进入监测"已经不是重点了，直接作废，别等告警结束了才补一句。 */
+  if (beaconAlarmActive()) {
+    s_pendingEnter = false;
+    s_pendingDone  = false;
+    return;
+  }
   if (voiceBusy()) return;                 // 上一句还在念，等着
 
   if (s_pendingEnter) {
@@ -170,6 +179,11 @@ static void berthFlushPending() {
 
 static void berthAnnounce() {
   unsigned long now = millis();
+
+  /* 落水告警没确认期间，靠泊语音全部让位：
+     人在水里这件事比"距岸还有几米"重要得多。
+     注意只是"语音让位" —— 靠泊判断、屏幕显示、蜂鸣器都照常。 */
+  if (beaconAlarmActive()) return;
 
   /* 有挂着的一次性播报时，距离播报先让路 ——
      距离下一轮还有，那两句只有一次 */

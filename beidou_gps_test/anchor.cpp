@@ -14,6 +14,7 @@
 #include "gnss.h"
 #include "tof.h"
 #include "voice.h"
+#include "beacon.h"     // 落水告警期间锚泊语音让位
 
 #if ANCHOR_ENABLE
 
@@ -141,9 +142,12 @@ static void judge(unsigned long now) {
     if (voiceBusyPrio() >= VOICE_PRIO_ALARM) return;
     s_alarm = want;
     s_lastAnnounceMs = now;
-    if      (want == 0x22) voiceSpeakAnchorDragging();
-    else if (want == 0x21) voiceSpeakAnchorSuspect(s_drift, dirSector(s_driftDir));
-    else if (want == 0x00) voiceSpeakAnchorOk();
+    /* 落水告警没确认期间只更新状态、不说话（屏幕和蜂鸣器照常） */
+    if (!beaconAlarmActive()) {
+      if      (want == 0x22) voiceSpeakAnchorDragging();
+      else if (want == 0x21) voiceSpeakAnchorSuspect(s_drift, dirSector(s_driftDir));
+      else if (want == 0x00) voiceSpeakAnchorOk();
+    }
     Serial.printf("[锚泊] 告警状态变为 %02X（位移 %.2f 米，速率 %.3f 米每秒）\n",
                   want, s_drift, s_slopeCur);
     return;
@@ -153,6 +157,7 @@ static void judge(unsigned long now) {
   if (s_alarm != 0x00 && (now - s_lastAnnounceMs >= ANCHOR_REPEAT_MS)) {
     if (voiceBusyPrio() >= VOICE_PRIO_ALARM) return;
     s_lastAnnounceMs = now;
+    if (beaconAlarmActive()) return;      // 落水没确认就先不抢语音
     if      (s_alarm == 0x22) voiceSpeakAnchorDragging();
     else if (s_alarm == 0x21) voiceSpeakAnchorSuspect(s_drift, dirSector(s_driftDir));
   }
