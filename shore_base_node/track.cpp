@@ -91,6 +91,32 @@ static void refreshGeo(TrackTarget& t) {
   }
 }
 
+/* 漂移速度估算：拿上一帧的位置和这一帧比，除以时间，再做一次平滑。
+   几个"不更新"的护栏：
+     · 两帧都要有有效坐标（刚接上定位的那一帧不算）
+     · 时间间隔 0.5~60 秒（太短测不准，太长中间漏包太多）
+     · 位移超过 200 米当作跳变（信标重启、坐标从无到有），不算漂移
+   这个速度只服务"多目标优先级排序"，不影响告警。               */
+static void updateDrift(TrackTarget& t, bool valid, double lat, double lon) {
+  unsigned long now = millis();
+
+  bool usable = t.valid && valid && (t.prevMs != 0);
+  uint32_t dt = usable ? (now - t.prevMs) : 0;
+
+  if (usable && dt >= 500 && dt <= 60000) {
+    float d = (float)geoDistanceM(t.prevLat, t.prevLon, lat, lon);
+    if (d <= 200.0f) {
+      float v = d / ((float)dt / 1000.0f);
+      /* 首次直接取实测值，之后按 0.7 旧 + 0.3 新 平滑，免得数字乱跳 */
+      t.driftMps = (t.driftMps > 0.0f) ? (0.7f * t.driftMps + 0.3f * v) : v;
+    }
+  }
+
+  t.prevLat = lat;
+  t.prevLon = lon;
+  t.prevMs  = now;
+}
+
 /* ---------------- 信标落水播报 ----------------
    去重条件（和船端一致）：首次、方位有无变化、目标移动过、或超时才念一遍。
    再加一个全局节流：任意两次播报至少隔 ANNOUNCE_MIN_GAP_MS，
@@ -213,6 +239,9 @@ void trackOnPacket(const LoraPacket& pkt) {
                   pkt.srcId, (unsigned long)pkt.seq);
     return;
   }
+
+  /* 先算漂移速度：此时 t 里还是上一帧的位置和定位有效性 */
+  updateDrift(t, pkt.valid, pkt.lat, pkt.lon);
 
   t.id    = pkt.srcId;
   t.has   = true;
@@ -354,4 +383,63 @@ bool trackAcked() { return s_acked; }
 uint32_t trackAgeMs(const TrackTarget& t) {
   if (!t.has) return 0xFFFFFFFFUL;           // 从来没收到过
   return millis() - t.lastMs;
+}
+
+/* ---------------- 多目标救援优先级（文档 8.4） ---------------- */
+
+/* 这只信标离船端有多远（米）。船端不在线或坐标不齐时返回 -1。 */
+float trackDistToVessel(const TrackTarget& t) {
+  if (!(t.has && t.valid && s_vessel.linkUp && s_vessel.valid)) return -1.0f;
+  return (float)geoDistanceM(s_vessel.lat, s_vessel.lon, t.lat, t.lon);
+}
+
+/* 优先级评分 0~100，越高越紧急。
+   四项（文档 8.4）：漂移速度、离岸距离、剩余电量、离最近船舶的距离。
+   每项先归一化到 0~1（除以"满分量"），再按权重做加权平均，最后 ×100。
+
+   为什么有的项会"不参与"：
+     · 离岸距离：算不出来（本节点没定位、或信标没定位）时不参与
+     · 离最近船舶的距离：船端不在线时不参与 —— 没有船，这个量没意义
+     · 剩余电量：信标目前还没有上报电量，这一项永远不参与；
+       等以后信标把电量发过来，在这里把归一化分数补上就能自动生效。
+   不参与的项目权重会自动从分母里扣掉，所以分数不会因此变低。          */
+float trackPriority(const TrackTarget& t) {
+  if (!t.has) return 0.0f;
+
+  float wSum = 0.0f, sSum = 0.0f;
+
+  /* 1) 漂移速度 */
+  if (PRIO_W_DRIFT > 0.0f) {
+    float r = t.driftMps / PRIO_DRIFT_FULL_MPS;
+    if (r < 0.0f) r = 0.0f;
+    if (r > 1.0f) r = 1.0f;
+    sSum += r * PRIO_W_DRIFT;
+    wSum += PRIO_W_DRIFT;
+  }
+
+  /* 2) 离岸距离（= 岸基节点到信标的距离，岸基就钉在码头岸壁上） */
+  if (PRIO_W_OFFSHORE > 0.0f && t.haveDir) {
+    float r = t.distM / PRIO_OFFSHORE_FULL_M;
+    if (r < 0.0f) r = 0.0f;
+    if (r > 1.0f) r = 1.0f;
+    sSum += r * PRIO_W_OFFSHORE;
+    wSum += PRIO_W_OFFSHORE;
+  }
+
+  /* 3) 剩余电量：信标还没上报，跳过（预留位置） */
+
+  /* 4) 离最近船舶（船端）的距离 */
+  if (PRIO_W_VESSEL_DIST > 0.0f) {
+    float dv = trackDistToVessel(t);
+    if (dv >= 0.0f) {
+      float r = dv / PRIO_VESSEL_FULL_M;
+      if (r < 0.0f) r = 0.0f;
+      if (r > 1.0f) r = 1.0f;
+      sSum += r * PRIO_W_VESSEL_DIST;
+      wSum += PRIO_W_VESSEL_DIST;
+    }
+  }
+
+  if (wSum <= 0.0f) return 0.0f;
+  return 100.0f * sSum / wSum;
 }

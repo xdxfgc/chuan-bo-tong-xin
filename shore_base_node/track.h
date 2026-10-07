@@ -43,6 +43,13 @@ struct TrackTarget {
   float         distM     = 0.0f;
   float         bearing   = 0.0f;
   int           sector    = 0;
+
+  /* 漂移速度（米/秒）：用相邻两帧的位移除以时间，再做平滑。
+     多目标优先级排序要用它 —— 漂得快的先救。                      */
+  float         driftMps  = 0.0f;
+  double        prevLat   = 0.0;
+  double        prevLon   = 0.0;
+  unsigned long prevMs    = 0;
 };
 
 void trackBegin();
@@ -57,6 +64,14 @@ int                trackBeaconCount();       // 已经收到过数据的信标�
 const TrackTarget& trackBeaconAt(int i);     // 第 i 只（0 ≤ i < count）
 
 const char*        trackDirText(const TrackTarget& t);   // 方位文字，如“东北”
+
+/* 多目标救援优先级（文档 8.4）：四项加权，返回 0~100，越高越紧急。
+   权重和满分量在 config.h 里配（PRIO_W_* / PRIO_*_FULL_*）。 */
+float              trackPriority(const TrackTarget& t);
+
+/* 这只信标离船端有多远（米）；坐标不齐时返回 -1。
+   优先级里的“离最近船舶的距离”就是它。                        */
+float              trackDistToVessel(const TrackTarget& t);
 
 /* 距最近一次收到这个目标的数据过了多久（毫秒）。
    从来没收到过返回 0xFFFFFFFF —— 网页上"最近更新"靠它显示"3 秒前"这种。 */

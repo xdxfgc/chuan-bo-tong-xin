@@ -125,6 +125,20 @@ static const uint32_t BEACON_LOST_MS = 15000;   // 超过这么久没收到信�
    文档按三只配置，这里留 4 个位置。                               */
 #define MAX_BEACONS 4
 
+/* ---------------- 多目标救援优先级（文档 8.4） ----------------
+   多只信标同时落水时，按四项加权打分，分数越高越紧急，
+   值班室按这个顺序决定先救谁。每一项先归一化（除以"满分量"），
+   再按权重做加权平均；某一项暂时拿不到数据就不参与（权重自动归一化）。
+   权重都填 0 表示这一项完全不算。                                */
+#define PRIO_W_DRIFT       1.0f    // 漂移速度：漂得越快越紧急
+#define PRIO_W_OFFSHORE    1.0f    // 离岸距离：离岸越远越难救
+#define PRIO_W_BATTERY     1.0f    // 剩余电量：越低越紧急（信标还没上报，暂时自动跳过）
+#define PRIO_W_VESSEL_DIST 1.0f    // 离最近船舶的距离：越远越难够到
+
+static const float PRIO_DRIFT_FULL_MPS = 1.00f;    // 漂到 1 米/秒算满分
+static const float PRIO_OFFSHORE_FULL_M = 500.0f;  // 离岸 500 米算满分
+static const float PRIO_VESSEL_FULL_M   = 1000.0f; // 离船端 1000 米算满分
+
 /* ---------------- WiFi ----------------
    小米路由器有两个 WiFi 名字：不带 _5G 的是 2.4GHz（ESP32 必需）。 */
 #define WIFI_SSID   "Xiaomi_AE4D"

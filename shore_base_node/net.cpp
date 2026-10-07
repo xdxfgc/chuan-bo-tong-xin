@@ -139,6 +139,18 @@ static const char INDEX_HTML[] = R"HTML(
   <p class="sub">多只信标同时落水时这里会各占一行；顶部横幅按最紧急的那只提示。</p>
   <p class="sub">收到信标 M 帧时本节点会回 ACK，岸端同样具备落水接收能力。</p>
 
+  <h2>救援优先级（文档 8.4）</h2>
+  <table class="tbl">
+    <thead><tr>
+      <th>顺序</th><th>编号</th><th>评分</th><th>漂移速度</th>
+      <th>离岸基</th><th>离船端</th><th>方位</th>
+    </tr></thead>
+    <tbody id="ptable"><tr><td class="empty" colspan="7">还没有信标数据</td></tr></tbody>
+  </table>
+  <p class="sub">按四项加权打分，分数越高越紧急，值班室按这个顺序施救：
+  漂移速度、离岸距离、剩余电量、离最近船舶的距离。
+  信标目前还没上报电量，那一项自动不参与；权重在 config.h 里可调（PRIO_W_*）。</p>
+
   <h2>态势图（以岸基为中心，正北朝上）</h2>
   <canvas id="smap" width="720" height="720"></canvas>
   <p class="sub">中心是岸基节点。蓝点=岸基，圆点=信标（按编号配色），绿点=船端。
@@ -186,6 +198,14 @@ static const char INDEX_HTML[] = R"HTML(
     <a class="btn" id="btnCsv" href="/log" download="shore_log.csv">下载 CSV</a>
     <button class="btn" onclick="clearLog()">清空</button>
   </div>
+  <p class="sub">回放：先点「加载回放数据」，然后拖滑块逐条看，或者点「播放 / 暂停」自动过。</p>
+  <div>
+    <button class="btn" onclick="loadPlayback()">加载回放数据</button>
+    <button class="btn" onclick="togglePlay()">播放 / 暂停</button>
+  </div>
+  <input type="range" id="pbRange" min="0" max="0" value="0"
+         style="width:100%;margin:6px 0 12px" oninput="showRec(this.value)">
+  <div class="raw" id="pbInfo">未加载</div>
   <p class="sub">每秒存一帧：本节点定位、主信标（编号/链路/坐标/距离/方位）、
   船端（链路/坐标/距离/方位/速度/航向/卫星）、岸侧测距。
   CSV 带表头，Excel 直接能开 —— 文档要求的“输入输出全部记录以便复核”就是它。</p>
@@ -261,6 +281,26 @@ async function tick(){
       }).join('');
     } else {
       tb.innerHTML = '<tr><td class="empty" colspan="8">还没收到信标数据</td></tr>';
+    }
+
+    /* 救援优先级：后端算好评分，这里只按分数从高到低排个序。
+       分数越高越紧急，排最前面的那只先救。 */
+    const pt = document.getElementById('ptable');
+    if(d.bs && d.bs.length){
+      const arr = d.bs.slice().sort(function(x, y){ return y.score - x.score; });
+      pt.innerHTML = arr.map(function(x, i){
+        const off = x.haveDir ? (x.dist.toFixed(0) + ' m') : '--';
+        const vd  = (x.vdist >= 0) ? (x.vdist.toFixed(0) + ' m') : '--';
+        return '<tr>' +
+          '<td class="' + (i === 0 ? 'ok' : '') + '">' + (i + 1) + '</td>' +
+          '<td>' + (x.id > 0 ? ('信标 ' + x.id) : '老格式') + '</td>' +
+          '<td>' + x.score.toFixed(1) + '</td>' +
+          '<td>' + x.drift.toFixed(2) + ' m/s</td>' +
+          '<td>' + off + '</td><td>' + vd + '</td>' +
+          '<td>' + (x.haveDir ? x.dirText : '--') + '</td></tr>';
+      }).join('');
+    } else {
+      pt.innerHTML = '<tr><td class="empty" colspan="7">还没有信标数据</td></tr>';
     }
 
     /* 确认按钮：确认之后停止重复播报；有新信标上线会自动恢复 */
@@ -437,7 +477,61 @@ function toggleLog(){
   const on = document.getElementById('btnLog').dataset.on === '1';
   logCtl(on ? 'off' : 'on');
 }
-function clearLog(){ logCtl('clear'); }
+function clearLog(){
+  logCtl('clear');
+  pbData = null; pbIdx = 0;
+  document.getElementById('pbRange').max = 0;
+  document.getElementById('pbInfo').textContent = '已清空。';
+}
+
+/* ---------------- 数据回放 ----------------
+   CSV 列顺序（和 logbook.cpp 的表头一致）：
+   0 t_ms 1 time 2 node_lat 3 node_lon 4 node_sats 5 node_hdop 6 node_fix 7 tof_mm
+   8 b_count 9 b_id 10 b_link 11 b_valid 12 b_lat 13 b_lon 14 b_dist_m 15 b_brg
+   16 v_link 17 v_valid 18 v_lat 19 v_lon 20 v_dist_m 21 v_brg 22 v_sog_kn 23 v_cog 24 v_sats */
+let pbData = null, pbIdx = 0, pbTimer = null;
+async function loadPlayback(){
+  try{
+    const t = await (await fetch('/log',{cache:'no-store'})).text();
+    const all = t.split('\n');
+    pbData = all.slice(1).filter(function(l){ return l.length > 3; });
+    const r = document.getElementById('pbRange');
+    if(!pbData.length){
+      document.getElementById('pbInfo').textContent = '还没有记录。';
+      r.max = 0;
+      return;
+    }
+    r.max = pbData.length - 1;
+    r.value = pbData.length - 1;
+    showRec(pbData.length - 1);
+  }catch(e){
+    document.getElementById('pbInfo').textContent = '加载失败。';
+  }
+}
+function showRec(i){
+  if(!pbData || !pbData.length) return;
+  pbIdx = Math.min(Math.max(0, parseInt(i,10) || 0), pbData.length - 1);
+  const p = pbData[pbIdx].split(',');
+  const onoff = function(v){ return v === '1' ? '在线' : '离线'; };
+  document.getElementById('pbInfo').textContent =
+    '第 ' + (pbIdx + 1) + ' / ' + pbData.length + ' 条\n' +
+    '时间     ' + (p[1] || '--') + '     岸基卫星 ' + p[4] + ' 颗   HDOP ' + p[5] + '\n' +
+    '岸基位置 ' + p[2] + ', ' + p[3] + '\n' +
+    '信标     ' + (p[9] || '--') + ' 号   ' + onoff(p[10]) + '   ' + (p[12] || '--') + ', ' + (p[13] || '--') + '\n' +
+    '         距岸基 ' + (p[14] || '--') + ' m   方位 ' + (p[15] || '--') + '°\n' +
+    '船端     ' + onoff(p[16]) + '   ' + (p[18] || '--') + ', ' + (p[19] || '--') + '\n' +
+    '         距岸基 ' + (p[20] || '--') + ' m   方位 ' + (p[21] || '--') + '°   速度 ' + (p[22] || '--') + ' 节\n' +
+    '岸侧测距 ' + (p[7] || '--') + ' mm';
+  document.getElementById('pbRange').value = pbIdx;
+}
+function togglePlay(){
+  if(pbTimer){ clearInterval(pbTimer); pbTimer = null; return; }
+  if(!pbData){ loadPlayback(); return; }
+  pbTimer = setInterval(function(){
+    if(pbIdx >= pbData.length - 1){ clearInterval(pbTimer); pbTimer = null; return; }
+    showRec(pbIdx + 1);
+  }, 300);
+}
 tick(); setInterval(tick, 1000);
 </script>
 </body>
@@ -551,6 +645,10 @@ static String buildJson() {
     snprintf(num, sizeof(num), "%.0f", t.distM);  j += ",\"dist\":"; j += num;
     snprintf(num, sizeof(num), "%.0f", t.bearing); j += ",\"brg\":"; j += num;
     j += ",\"dirText\":\""; j += escapeJson(String(trackDirText(t))); j += "\"";
+    /* 多目标救援优先级：漂移速度 + 综合评分 + 离船端多远 */
+    snprintf(num, sizeof(num), "%.2f", t.driftMps); j += ",\"drift\":"; j += num;
+    snprintf(num, sizeof(num), "%.1f", trackPriority(t)); j += ",\"score\":"; j += num;
+    snprintf(num, sizeof(num), "%.0f", trackDistToVessel(t)); j += ",\"vdist\":"; j += num;
     {
       uint32_t at = trackAgeMs(t);
       snprintf(num, sizeof(num), "%ld", (at == 0xFFFFFFFFUL) ? -1L : (long)(at / 1000UL));
