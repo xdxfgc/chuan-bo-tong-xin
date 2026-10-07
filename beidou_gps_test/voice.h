@@ -29,6 +29,16 @@ uint8_t voiceVolume();
 bool    voiceBusy();
 uint8_t voiceBusyPrio();
 
+/* ---------------- 语音状态（给网页显示用） ----------------
+   这些是"只读"的查询接口，网页上能看到：音量多少、在不在念、
+   刚才念的是什么、累计念了几条、因为忙跳过了几次。 */
+uint32_t    voiceBusyLeftMs();     // 预计还要念多久（毫秒），0 = 没在念
+const char* voiceLastLabel();      // 最近一次播报的名称（UTF-8，给网页显示）
+uint32_t    voiceLastMs();         // 最近一次播报的时刻（millis）
+uint32_t    voiceCount();          // 累计播报条数
+uint32_t    voiceSkipCount();      // 因为"上一句没念完"被跳过的次数
+void        voiceNoteSkip();       // 调用方跳过一条播报时记一次
+
 void voiceSpeakTest();             // 播一句“你好”，调音量试听用
 void voiceSpeakStartup();          // 开机提示音
 

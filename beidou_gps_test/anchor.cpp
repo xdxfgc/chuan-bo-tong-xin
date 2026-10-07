@@ -12,6 +12,7 @@
 
 #include "anchor.h"
 #include "gnss.h"
+#include "ownpos.h"     // 手动坐标期间挡住走锚监测
 #include "tof.h"
 #include "voice.h"
 #include "beacon.h"     // 落水告警期间锚泊语音让位
@@ -207,6 +208,14 @@ void anchorUpdate() {
 
 void anchorSetReference() {
   const GpsStatus& g = gpsGet();
+
+  /* 手动坐标是钉死的，位移永远是 0，走锚监测没意义 —— 直接挡住并说明 */
+  if (ownPosManual()) {
+    Serial.println("[锚泊] 现在用的是手动坐标（位置不会变），走锚监测需要真实北斗定位。");
+    Serial.println("[锚泊] 想测走锚：串口敲 pos auto 切回北斗，等定位成功再设基准。");
+    return;
+  }
+
   if (!g.valid) {
     Serial.println("[锚泊] 现在没有有效定位，无法设基准");
     return;

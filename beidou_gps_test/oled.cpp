@@ -8,6 +8,7 @@
 
 #include "oled.h"
 #include "gnss.h"
+#include "ownpos.h"     // 本船位置来源（北斗 / 手动坐标）
 #include "tof.h"
 #include "imu.h"
 #include "mag.h"
@@ -55,7 +56,6 @@ void oledBegin() {
 /* ---------------- 画面 A：信标界面 ---------------- */
 
 static void renderBeacon() {
-  const GpsStatus& g = gpsGet();
   char buf[32];
 
   /* 第 1 行：标题（带信标编号）+ 链路状态 */
@@ -108,8 +108,9 @@ static void renderBeacon() {
 
   /* 第 5 行：本船坐标 */
   drawCN(0, 59, "本船");
-  if (g.valid) {
-    snprintf(buf, sizeof(buf), "%.4f %.4f", g.lat, g.lon);
+  /* 这里跟着"系统认为的本船位置"走：室内演示时可能是手动坐标 */
+  if (ownPosValid()) {
+    snprintf(buf, sizeof(buf), "%.4f %.4f", ownPosLat(), ownPosLon());
     drawSM(26, 59, buf);
   } else {
     drawCN(26, 59, "未定位");

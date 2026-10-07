@@ -32,6 +32,7 @@
 
 #include "config.h"
 #include "gnss.h"
+#include "ownpos.h"     // 本船位置来源（北斗 / 手动坐标）
 #include "tof.h"
 #include "oled.h"
 #include "imu.h"
@@ -81,6 +82,7 @@ void setup() {
   Serial.println(" 通导一体化水上安全终端 · 移动终端");
   Serial.println("==================================================");
 
+  ownPosBegin();  // 本船位置来源：读回上次的手动坐标（默认用北斗）
   gpsBegin();     // 北斗定位
   tofBegin();     // 激光测距
   oledBegin();    // OLED 显示（与激光共用 I2C 总线）
@@ -131,8 +133,11 @@ void loop() {
                         (age >= BROADCAST_SLOT_MIN_MS && age <= BROADCAST_SLOT_MAX_MS);
     if (inSlot) {
       lastBc = millis();
+      /* 广播出去的位置也用"系统认为的本船位置"（手动模式下就是手动坐标），
+         这样岸基算出来的"距船端"和船端自己算的一致。 */
       const GpsStatus& g = gpsGet();
-      loraSendShipStatus(g.valid, g.lat, g.lon, g.speedKmh / 1.852f, g.course, g.satsUsed);
+      loraSendShipStatus(ownPosValid(), ownPosLat(), ownPosLon(),
+                         g.speedKmh / 1.852f, g.course, g.satsUsed);
     }
   }
 

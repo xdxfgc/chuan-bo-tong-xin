@@ -8,6 +8,7 @@
 
 #include "logbook.h"
 #include "gnss.h"
+#include "ownpos.h"     // 本船位置来源（北斗 / 手动坐标）
 #include "tof.h"
 #include "imu.h"
 #include "mag.h"
@@ -76,8 +77,11 @@ void logbookUpdate() {
 
   r.tMs      = millis();
   r.todSec   = (g.year != 0) ? (uint32_t)(g.hour * 3600UL + g.minute * 60UL + g.second) : 0;
-  r.lat6     = (int32_t)lround(g.lat * 1000000.0);
-  r.lon6     = (int32_t)lround(g.lon * 1000000.0);
+  /* 位置记"系统认为的本船位置"：室内演示时可能是手动坐标，
+     这样 CSV 里记的和网页上看到的是一致的。
+     卫星数、HDOP、时间这些仍然是北斗的真实值。 */
+  r.lat6     = (int32_t)lround(ownPosLat() * 1000000.0);
+  r.lon6     = (int32_t)lround(ownPosLon() * 1000000.0);
   r.tofMm    = tofIsValid() ? tofDistanceMm() : 0xFFFF;
   r.tof2Mm   = (tofSideIsValid() && tofSideDistanceMm() > 0) ? tofSideDistanceMm() : 0xFFFF;
   r.pitch10  = (int16_t)lround(constrain(imuGet().pitch, -300.0f, 300.0f) * 10.0f);

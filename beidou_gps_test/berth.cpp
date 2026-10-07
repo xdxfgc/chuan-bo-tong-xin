@@ -219,6 +219,7 @@ static void berthAnnounce() {
      所以宁可少说一句，也不要半句话被下一句掐断。下一轮再报最新的距离。 */
   if (voiceBusy()) {
     static unsigned long lastSkipLog = 0;
+    voiceNoteSkip();                     // 记一笔：网页上能看到"跳过了几次"
     if (now - lastSkipLog >= 3000) {
       lastSkipLog = now;
       Serial.println("[靠泊] 上一句话还没念完，本次距离播报跳过");

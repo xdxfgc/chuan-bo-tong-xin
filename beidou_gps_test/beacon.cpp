@@ -4,6 +4,7 @@
 
 #include "beacon.h"
 #include "gnss.h"
+#include "ownpos.h"     // 本船位置来源（北斗 / 手动坐标）
 #include "lora_link.h"
 #include "voice.h"
 #include "mag.h"
@@ -113,10 +114,12 @@ static void refreshGeo() {
   s_relBearing = 0.0f;
   s_relSector  = 0;
 
-  const GpsStatus& g = gpsGet();
-  if (s_hasTarget && s_targetValid && g.valid) {
-    s_distM   = (float)geoDistanceM(g.lat, g.lon, s_tLat, s_tLon);
-    s_bearing = (float)geoBearingDeg(g.lat, g.lon, s_tLat, s_tLon);
+  /* 本船位置统一从 ownpos 取：默认是北斗，室内演示时可能是手动坐标 */
+  if (s_hasTarget && s_targetValid && ownPosValid()) {
+    double mLat = ownPosLat();
+    double mLon = ownPosLon();
+    s_distM   = (float)geoDistanceM(mLat, mLon, s_tLat, s_tLon);
+    s_bearing = (float)geoBearingDeg(mLat, mLon, s_tLat, s_tLon);
     s_sector  = geoDirSector(s_bearing);
     s_haveDir = true;
 
@@ -179,8 +182,7 @@ void beaconOnPacket(const TargetPacket& pkt) {
   s_everLinked   = true;
 
   // 先回 ACK，别被显示和播报拖慢
-  const GpsStatus& g = gpsGet();
-  loraSendAck(pkt.seq, g.valid, g.lat, g.lon);
+  loraSendAck(pkt.seq, ownPosValid(), ownPosLat(), ownPosLon());
 
   if (pkt.duplicate) {
     Serial.printf("[LoRa] 信标 %d #%lu 是重传包，已回 ACK（不重复播报）\n",

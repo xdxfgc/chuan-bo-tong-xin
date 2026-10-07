@@ -4,6 +4,7 @@
 
 #include "net.h"
 #include "gnss.h"
+#include "ownpos.h"     // 本船位置来源（北斗 / 手动坐标）
 #include "tof.h"
 #include "imu.h"
 #include "mag.h"
@@ -13,6 +14,7 @@
 #include "buzzer.h"
 #include "anchor.h"
 #include "logbook.h"
+#include "voice.h"      // 网页上的语音信息与音量控制
 
 static WebServer server(WEB_PORT);
 static unsigned long lastWifiTry = 0;
@@ -61,6 +63,9 @@ word-break:break-all;color:#9fe0b0;white-space:pre-wrap}
 .raw{color:#9ec7e8}
 a{color:var(--accent)}
 .bar{margin:-6px 0 16px}
+.inp{margin:0 8px 8px 0;padding:9px 12px;width:150px;border-radius:10px;
+border:1px solid var(--line);background:#0b1219;color:var(--txt);font-size:15px}
+.vinfo{display:inline-block;margin-left:10px;color:var(--dim);font-size:13px;line-height:38px}
 .btn{padding:10px 16px;border-radius:10px;border:1px solid var(--line);
 background:#22303c;color:var(--txt);font-size:15px;cursor:pointer}
 .btn.off{background:#3a2020;border-color:#7f2d2d;color:#ff9b9b}
@@ -89,6 +94,12 @@ background:#1a232e;color:var(--dim);font-size:14px;cursor:pointer}
 <button id="btnAck" class="btn" onclick="ackAlarm()">无落水告警</button>
 <button id="btnMoor" class="btn" onclick="toggleMoor()">设锚泊基准</button>
 </div>
+<div class="bar">
+<button class="btn" onclick="volStep(-2)">音量 −</button>
+<button class="btn" onclick="volStep(2)">音量 +</button>
+<button class="btn" onclick="voiceTest()">试听</button>
+<span class="vinfo" id="vinfo">语音：--</span>
+</div>
 <div class="tabs">
 <button class="tab" data-t="all" onclick="showTab('all')">全部</button>
 <button class="tab on" data-t="1" onclick="showTab('1')">① 定位</button>
@@ -115,6 +126,15 @@ background:#1a232e;color:var(--dim);font-size:14px;cursor:pointer}
 <div class="card"><div class="k">北京时间</div><div class="v small" id="bj">--</div></div>
 <div class="card"><div class="k">日期</div><div class="v small" id="date">--</div></div>
 <div class="card"><div class="k">天线状态</div><div class="v small" id="ant">--</div></div>
+<div class="card"><div class="k">位置来源</div><div class="v small" id="psrc">--</div></div>
+</div>
+<p class="sub">室内演示用：北斗定不上位时，在这里手动填一个本船坐标，信标方位/距离、态势图、岸基距离马上就能算出来。
+坐标存在 flash 里，重启不丢；手动坐标期间走锚监测不可用，要测走锚请先点“切回北斗”。</p>
+<div class="bar">
+<input class="inp" id="plat" placeholder="纬度 26.212676">
+<input class="inp" id="plon" placeholder="经度 111.599388">
+<button class="btn" onclick="setPos()">设为手动坐标</button>
+<button class="btn" onclick="clearPos()">切回北斗</button>
 </div>
 </section>
 <section class="pane" data-p="2">
@@ -239,12 +259,19 @@ b.className='banner bad';
 b.textContent='锚泊告警 · ' + d.anchorAlarmText;
 } else if(d.valid){
 b.className='banner ok';
-b.textContent='定位成功 · ' + (d.fixType===3?'三维定位':'二维定位');
+b.textContent = d.posManual ? '位置：手动坐标（模拟）· 其余功能真实运行'
+                            : ('定位成功 · ' + (d.fixType===3?'三维定位':'二维定位'));
 } else {
 b.className='banner bad';
 b.textContent = d.alarm;
 }
-document.getElementById('ftype').textContent = d.fixType===3?'三维定位':(d.fixType===2?'二维定位':'未定位');
+document.getElementById('ftype').textContent = d.posManual ? '手动坐标（模拟）'
+                                             : (d.fixType===3?'三维定位':(d.fixType===2?'二维定位':'未定位'));
+document.getElementById('psrc').textContent  = d.posManual ? '手动坐标（模拟）' : d.posSrc;
+document.getElementById('vinfo').textContent = '语音：音量 ' + d.vol + '/16 · '
++ (d.voiceBusy ? ('正在念（还剩 ' + (d.voiceLeftMs / 1000).toFixed(1) + ' 秒）') : '空闲')
++ (d.voiceCount ? (' · 最近：' + d.voiceLast + '（' + d.voiceAgo + ' 秒前）') : ' · 还没播过')
++ (d.voiceSkip ? (' · 等不上的跳过 ' + d.voiceSkip + ' 次') : '');
 document.getElementById('lat').textContent   = d.valid ? d.lat.toFixed(6)+'° N' : '--';
 document.getElementById('lon').textContent   = d.valid ? d.lon.toFixed(6)+'° E' : '--';
 document.getElementById('alt').textContent   = d.valid ? d.alt.toFixed(1)+' m' : '--';
@@ -401,6 +428,30 @@ pbData = null; pbIdx = 0;
 document.getElementById('pbRange').max = 0;
 document.getElementById('pbInfo').textContent = '已清空。';
 tick();
+}
+async function setPos(){
+const a = parseFloat(document.getElementById('plat').value);
+const b = parseFloat(document.getElementById('plon').value);
+if(!isFinite(a) || !isFinite(b) || a < -90 || a > 90 || b < -180 || b > 180 ||
+(Math.abs(a) < 1e-6 && Math.abs(b) < 1e-6)){
+alert('坐标不合法：纬度要在 -90~90，经度要在 -180~180，且不能填 0,0。');
+return;
+}
+try{ await fetch('/pos?lat=' + a + '&lon=' + b, {cache:'no-store'}); }catch(e){}
+tick();
+}
+async function clearPos(){
+try{ await fetch('/pos?mode=auto', {cache:'no-store'}); }catch(e){}
+tick();
+}
+async function volStep(d){
+const cur = (lastData && typeof lastData.vol === 'number') ? lastData.vol : 16;
+const v = Math.max(0, Math.min(16, cur + d));
+try{ await fetch('/vol?v=' + v, {cache:'no-store'}); }catch(e){}
+tick();
+}
+async function voiceTest(){
+try{ await fetch('/vol?test=1', {cache:'no-store'}); }catch(e){}
 }
 function showTab(t){
 document.querySelectorAll('.pane').forEach(function(p){
@@ -620,12 +671,24 @@ static String buildJson() {
   const GpsStatus& d = gpsGet();
   char num[32];
 
+  /* valid / lat / lon 给的是"系统认为的本船位置"：
+     默认是北斗，室内演示切了手动坐标之后就是手动值。
+     北斗自己的真实状态另放在 gpsValid / gpsLat / gpsLon，互相不混淆。 */
+  bool   mPos = ownPosManual();
+  double mLat = ownPosLat();
+  double mLon = ownPosLon();
+
   String j = "{";
-  j += "\"valid\":";       j += (d.valid ? "true" : "false");
+  j += "\"valid\":";       j += (ownPosValid() ? "true" : "false");
+  j += ",\"posManual\":";  j += (mPos ? "true" : "false");
+  j += ",\"posSrc\":\"";   j += escapeJson(ownPosSrcText()); j += "\"";
+  j += ",\"gpsValid\":";   j += (d.valid ? "true" : "false");
   j += ",\"fixType\":";    j += d.fixType;
   j += ",\"fixQuality\":"; j += d.fixQuality;
-  snprintf(num, sizeof(num), "%.6f", d.lat); j += ",\"lat\":"; j += num;
-  snprintf(num, sizeof(num), "%.6f", d.lon); j += ",\"lon\":"; j += num;
+  snprintf(num, sizeof(num), "%.6f", mLat);  j += ",\"lat\":";    j += num;
+  snprintf(num, sizeof(num), "%.6f", mLon);  j += ",\"lon\":";    j += num;
+  snprintf(num, sizeof(num), "%.6f", d.lat); j += ",\"gpsLat\":"; j += num;
+  snprintf(num, sizeof(num), "%.6f", d.lon); j += ",\"gpsLon\":"; j += num;
   snprintf(num, sizeof(num), "%.1f", d.altitude); j += ",\"alt\":"; j += num;
   j += ",\"satsUsed\":";   j += d.satsUsed;
   j += ",\"satsView\":";   j += d.satsView;
@@ -681,6 +744,17 @@ static String buildJson() {
   j += ",\"shHaveDir\":";   j += (shoreHaveDir() ? "true" : "false");
   snprintf(num, sizeof(num), "%.0f", shoreDistM()); j += ",\"shDist\":"; j += num;
   j += ",\"shDirText\":\""; j += escapeJson(String(shoreDirText())); j += "\"";
+
+  /* 语音播报信息：音量、在不在念、刚才念的是什么、跳过了几次 */
+  j += ",\"vol\":";         j += voiceVolume();
+  j += ",\"voiceBusy\":";   j += (voiceBusy() ? "true" : "false");
+  j += ",\"voiceLeftMs\":"; j += voiceBusyLeftMs();
+  j += ",\"voiceLast\":\""; j += escapeJson(String(voiceLastLabel())); j += "\"";
+  j += ",\"voiceAgo\":";    j += (voiceLastMs() ? (millis() - voiceLastMs()) / 1000UL : 0UL);
+  j += ",\"voiceCount\":";  j += voiceCount();
+  j += ",\"voiceSkip\":";   j += voiceSkipCount();
+  j += ",\"voicePrio\":";   j += voiceBusyPrio();
+
   j += ",\"magOk\":";       j += (magPresent() ? "true" : "false");
   j += ",\"magCal\":";      j += (magCalibrated() ? "true" : "false");
   snprintf(num, sizeof(num), "%.1f", magHeadingDeg()); j += ",\"heading\":"; j += num;
@@ -866,6 +940,38 @@ void netBegin() {
     server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
   });
   server.on("/log", handleLogCSV);
+  /* 音量与试听：/vol?v=8 设音量；/vol?test=1 念一句“你好”试听 */
+  server.on("/vol", []() {
+    if (server.hasArg("v")) {
+      int v = server.arg("v").toInt();
+      if (v < 0)  v = 0;
+      if (v > 16) v = 16;
+      voiceSetVolume((uint8_t)v);
+    }
+    if (server.hasArg("test")) voiceSpeakTest();
+    server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
+  });
+  /* 本船位置来源：/pos?lat=..&lon=.. 设手动坐标；/pos?mode=auto 切回北斗 */
+  server.on("/pos", []() {
+    if (server.hasArg("mode") && server.arg("mode") == "auto") {
+      ownPosClear();
+      server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
+      return;
+    }
+    if (server.hasArg("lat") && server.hasArg("lon")) {
+      double la = server.arg("lat").toDouble();
+      double lo = server.arg("lon").toDouble();
+      if (!ownPosSet(la, lo)) {
+        server.send(400, "application/json; charset=utf-8",
+                    "{\"ok\":false,\"msg\":\"坐标不合法\"}");
+        return;
+      }
+      server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
+      return;
+    }
+    server.send(200, "application/json; charset=utf-8",
+                String("{\"ok\":true,\"manual\":") + (ownPosManual() ? "true" : "false") + "}");
+  });
   server.on("/logctl", []() {
     String op = server.arg("op");
     if      (op == "on")    logbookSetOn(true);

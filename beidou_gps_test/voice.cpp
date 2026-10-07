@@ -23,6 +23,12 @@ static uint8_t s_volume = 16;
 static uint32_t s_busyUntilMs = 0;
 static uint8_t  s_busyPrio    = 0;
 
+/* 语音状态（网页显示用） */
+static const char* s_lastLabel = "";   // 最近一次播报的名称
+static uint32_t    s_lastMs    = 0;
+static uint32_t    s_count     = 0;
+static uint32_t    s_skipCount = 0;
+
 /* ---------------- 文本拼装 ---------------- */
 
 #define VADD(frag) txtAdd((frag), sizeof(frag) - 1)     // 自动去掉结尾的 0x00
@@ -94,8 +100,9 @@ static uint32_t estimateSpeechMs() {
   return ms + 1000;
 }
 
-/* prio：这句话的分量，默认按"告警级"算，距离播报和落水另行指定 */
-static void voiceSend(uint8_t prio = VOICE_PRIO_ALARM) {
+/* prio  ：这句话的分量，默认按"告警级"算，距离播报和落水另行指定
+   label ：这句话叫什么（UTF-8），只给网页显示用，不影响播报内容 */
+static void voiceSend(uint8_t prio = VOICE_PRIO_ALARM, const char* label = "") {
   if (s_len == 0) return;
 
   uint8_t  frame[VOICE_TEXT_MAX + 8];
@@ -124,6 +131,9 @@ static void voiceSend(uint8_t prio = VOICE_PRIO_ALARM) {
   uint32_t ms = estimateSpeechMs();
   s_busyPrio    = prio;
   s_busyUntilMs = millis() + ms;
+  s_lastLabel   = (label && *label) ? label : "播报";
+  s_lastMs      = millis();
+  s_count++;
 
   Serial.printf("[语音] 发送 %u 字节，预计念 %.1f 秒%s\n", (unsigned)s_len, ms / 1000.0,
                 ack < 0 ? "" : (ack == 0x41 ? "  模块应答 OK" : "  应答异常"));
@@ -156,18 +166,29 @@ uint8_t voiceBusyPrio() {
   return voiceBusy() ? s_busyPrio : 0;
 }
 
+uint32_t voiceBusyLeftMs() {
+  int32_t left = (int32_t)(s_busyUntilMs - millis());
+  return (left > 0) ? (uint32_t)left : 0;
+}
+
+const char* voiceLastLabel() { return (s_lastLabel && *s_lastLabel) ? s_lastLabel : "--"; }
+uint32_t    voiceLastMs()     { return s_lastMs; }
+uint32_t    voiceCount()      { return s_count; }
+uint32_t    voiceSkipCount()  { return s_skipCount; }
+void        voiceNoteSkip()   { s_skipCount++; }
+
 void voiceSpeakTest() {
   txtReset();
   txtAddVolume();
   VADD(GB_HELLO);
-  voiceSend();
+  voiceSend(VOICE_PRIO_ALARM, "试听 你好");
 }
 
 void voiceSpeakStartup() {
   txtReset();
   txtAddVolume();
   VADD(GB_STARTUP);
-  voiceSend();
+  voiceSend(VOICE_PRIO_ALARM, "开机提示");
 }
 
 void voiceAnnounce(bool haveDir, double tLat, double tLon, float distM, int sector, bool useRel) {
@@ -200,28 +221,28 @@ void voiceAnnounce(bool haveDir, double tLat, double tLon, float distM, int sect
   txtAddLat(tLat);
   txtAddLon(tLon);
   if (!haveDir) VADD(GB_SELF_NOPOS);
-  voiceSend(VOICE_PRIO_SOS);    // 人员落水：最高优先级，可以顶掉靠泊播报
+  voiceSend(VOICE_PRIO_SOS, "人员落水");    // 最高优先级，可以顶掉靠泊播报
 }
 
 void voiceSpeakTargetNoPos() {
   txtReset();
   txtAddVolume();
   VADD(GB_TARGET_NOPOS);
-  voiceSend();
+  voiceSend(VOICE_PRIO_ALARM, "信标未定位");
 }
 
 void voiceSpeakLinkLost() {
   txtReset();
   txtAddVolume();
   VADD(GB_LINK_LOST);
-  voiceSend(VOICE_PRIO_SOS);    // 信标失联：搜救相关，同样最高
+  voiceSend(VOICE_PRIO_SOS, "信标失联");    // 搜救相关，同样最高
 }
 
 void voiceSpeakLinkBack() {
   txtReset();
   txtAddVolume();
   VADD(GB_LINK_BACK);
-  voiceSend(VOICE_PRIO_SOS);
+  voiceSend(VOICE_PRIO_SOS, "通信恢复");
 }
 
 /* ---------------- 靠泊辅助 ---------------- */
@@ -250,7 +271,7 @@ void voiceSpeakBerthEnter(float distM, bool side) {
   VADD(GB_BERTH_WATCH);
   txtAddSource(side);
   txtAddDistance(distM);
-  voiceSend();
+  voiceSend(VOICE_PRIO_ALARM, "靠泊监测");
 }
 
 void voiceSpeakBerthDistance(float distM, bool soon, bool side) {
@@ -259,7 +280,7 @@ void voiceSpeakBerthDistance(float distM, bool soon, bool side) {
   txtAddSource(side);
   txtAddDistance(distM);
   if (soon) VADD(GB_SOON_DOCK);
-  voiceSend(VOICE_PRIO_DIST);   // 靠泊距离播报：优先级最低，谁都能顶掉它
+  voiceSend(VOICE_PRIO_DIST, "靠泊距离");   // 优先级最低，谁都能顶掉它
 }
 
 void voiceSpeakBerthAlarm(uint8_t code, bool side) {
@@ -271,7 +292,7 @@ void voiceSpeakBerthAlarm(uint8_t code, bool side) {
     case 0x03: txtAddSource(side); VADD(GB_ALM_TOO_NEAR);  break;
     default: return;
   }
-  voiceSend(VOICE_PRIO_ALARM);  // 告警：能顶掉距离播报，顶不掉落水
+  voiceSend(VOICE_PRIO_ALARM, "靠泊告警");  // 能顶掉距离播报，顶不掉落水
 }
 
 void voiceSpeakBerthDone(bool side) {
@@ -279,7 +300,7 @@ void voiceSpeakBerthDone(bool side) {
   txtAddVolume();
   txtAddSource(side);
   VADD(GB_BERTH_DONE);
-  voiceSend();
+  voiceSend(VOICE_PRIO_ALARM, "靠泊完成");
 }
 
 /* ---------------- 走锚监测 ---------------- */
@@ -288,7 +309,7 @@ void voiceSpeakAnchorOn() {
   txtReset();
   txtAddVolume();
   VADD(GB_ANCHOR_ON);
-  voiceSend();
+  voiceSend(VOICE_PRIO_ALARM, "锚泊启动");
 }
 
 void voiceSpeakAnchorSuspect(float driftM, int sector) {
@@ -299,19 +320,19 @@ void voiceSpeakAnchorSuspect(float driftM, int sector) {
   VADD(GB_METER);
   VADD(GB_DRIFT_DIR);
   VADD(GB_DIR[sector & 7]);
-  voiceSend();
+  voiceSend(VOICE_PRIO_ALARM, "疑似走锚");
 }
 
 void voiceSpeakAnchorDragging() {
   txtReset();
   txtAddVolume();
   VADD(GB_ANCHOR_DRAG);
-  voiceSend();
+  voiceSend(VOICE_PRIO_ALARM, "走锚告警");
 }
 
 void voiceSpeakAnchorOk() {
   txtReset();
   txtAddVolume();
   VADD(GB_ANCHOR_OK);
-  voiceSend();
+  voiceSend(VOICE_PRIO_ALARM, "锚泊恢复");
 }

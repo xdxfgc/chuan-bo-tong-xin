@@ -7,6 +7,7 @@
 
 #include "shore.h"
 #include "gnss.h"
+#include "ownpos.h"     // 本船位置来源（北斗 / 手动坐标）
 #include <math.h>
 
 static const char* const GEO_DIR_UTF8[8] = { "正北", "东北", "正东", "东南",
@@ -67,10 +68,12 @@ static void refreshGeo() {
   s_bearing = 0.0f;
   s_sector  = 0;
 
-  const GpsStatus& g = gpsGet();
-  if (s_has && s_valid && g.valid) {
-    s_distM   = (float)geoDistanceM(g.lat, g.lon, s_lat, s_lon);
-    s_bearing = (float)geoBearingDeg(g.lat, g.lon, s_lat, s_lon);
+  /* 本船位置统一从 ownpos 取：默认北斗，室内演示时可能是手动坐标 */
+  if (s_has && s_valid && ownPosValid()) {
+    double mLat = ownPosLat();
+    double mLon = ownPosLon();
+    s_distM   = (float)geoDistanceM(mLat, mLon, s_lat, s_lon);
+    s_bearing = (float)geoBearingDeg(mLat, mLon, s_lat, s_lon);
     s_sector  = geoDirSector(s_bearing);
     s_haveDir = true;
   }
