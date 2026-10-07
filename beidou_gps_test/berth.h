@@ -26,6 +26,7 @@ float    berthSpeedMps();        // 接近速度（米每秒，正数=正在靠�
 uint8_t  berthAlarmCode();       // 0x00 无 / 0x01 / 0x02 / 0x03
 String   berthAlarmText();       // 告警文字
 String   berthDistanceText();    // 距离文字，如 "1.82 m" 或 "36 cm"
+String   berthDistanceHistory(); // 距离曲线：逗号分隔的历史距离（-1 = 当时读数无效）
 void     berthPrintReport();     // 串口打印一行
 bool     berthShowOnScreen();    // 是否该让屏幕切到靠泊画面（有告警/已靠妥/正在移动）
 

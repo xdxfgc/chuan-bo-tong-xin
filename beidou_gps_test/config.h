@@ -188,6 +188,12 @@ static const float BERTH_ANNOUNCE_STEP_M = 0.30f;
 
 static const uint8_t BERTH_DEBOUNCE_N  = 3;     // 告警去抖：连续多少帧满足才置位
 
+/* 靠泊距离曲线（文档表20 要求"态势视图显示靠泊距离曲线"）
+   每秒记一个点，90 个点 = 最近 1.5 分钟，网页上画成曲线。
+   无效读数记 -1，画图时断开，不会把曲线连成假的。            */
+#define BERTH_HIST_N   90
+#define BERTH_HIST_MS  1000UL
+
 /* ---------------- LoRa SX1278（433MHz，SPI） ----------------
    SCK->GPIO14  MISO->GPIO19  MOSI->GPIO23  NSS->GPIO13  RST->GPIO27
    DIO0 不接：程序用轮询，不需要中断脚。

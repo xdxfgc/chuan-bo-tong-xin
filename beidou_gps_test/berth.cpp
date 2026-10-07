@@ -63,6 +63,11 @@ static bool          s_pendingDone   = false;
 static bool          s_hasSayDist    = false;
 static float         s_sayDist       = 0.0f;
 
+/* 靠泊距离曲线：每秒记一个点，网页上画趋势（文档表20） */
+static float         s_hist[BERTH_HIST_N];
+static int           s_histN   = 0, s_histIdx = 0;
+static unsigned long s_histMs  = 0;
+
 /* ---------------- 工具 ---------------- */
 
 static float median3(float a, float b, float c) {
@@ -336,6 +341,14 @@ void berthUpdate() {
     if (s_active && s_dist > s_maxDist) s_maxDist = s_dist;
   }
 
+  /* ---- 距离曲线：每秒记一个点（不管在不在监测，网页上都有趋势看）---- */
+  if (now - s_histMs >= BERTH_HIST_MS) {
+    s_histMs = now;
+    s_hist[s_histIdx] = (s_valid && s_dist >= 0.0f) ? s_dist : -1.0f;
+    s_histIdx = (s_histIdx + 1) % BERTH_HIST_N;
+    if (s_histN < BERTH_HIST_N) s_histN++;
+  }
+
   /* ---- 激活 / 退出 ---- */
   if (!s_active) {
     if (s_valid && s_dist > 0.0f && s_dist <= BERTH_ENTER_M) {
@@ -444,6 +457,20 @@ String berthDistanceText() {
   return String(b);
 }
 
+/* 距离曲线：把环形缓冲按"从旧到新"拼成逗号分隔的字符串。
+   无效点输出 -1，网页画图时在那里断开。 */
+String berthDistanceHistory() {
+  String s;
+  s.reserve(s_histN * 6 + 8);
+  for (int k = 0; k < s_histN; k++) {
+    int idx = (s_histIdx - s_histN + k + BERTH_HIST_N * 2) % BERTH_HIST_N;
+    if (k) s += ",";
+    if (s_hist[idx] < 0.0f) s += "-1";
+    else                    s += String(s_hist[idx], 2);
+  }
+  return s;
+}
+
 void berthPrintReport() {
   const char* src = s_useSide ? "右舷" : "船头";
   if (!s_active) {
@@ -472,6 +499,7 @@ float berthSpeedMps()  { return 0.0f; }
 uint8_t berthAlarmCode() { return 0x00; }
 String berthAlarmText() { return "无"; }
 String berthDistanceText() { return "无效"; }
+String berthDistanceHistory() { return String(); }
 void berthPrintReport() {}
 
 #endif

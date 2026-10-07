@@ -159,8 +159,10 @@ background:#1a232e;color:var(--dim);font-size:14px;cursor:pointer}
 <div class="card"><div class="k">距岸距离</div><div class="v" id="bdist">--</div></div>
 <div class="card"><div class="k">接近速度</div><div class="v" id="bspd">--</div></div>
     <div class="card"><div class="k">靠泊状态</div><div class="v small" id="bstate">--</div></div>
-    <div class="card"><div class="k">数据来源</div><div class="v small" id="bsrc">--</div></div>
+<div class="card"><div class="k">数据来源</div><div class="v small" id="bsrc">--</div></div>
 </div>
+<p class="sub">靠泊距离曲线（最近 1.5 分钟。蓝线 3.5 米=进入监测，黄线 1 米=靠妥判定，红线 0.5 米=距岸过近）</p>
+<canvas id="bcurve" width="800" height="120"></canvas>
 </section>
 <section class="pane" data-p="5">
 <h2>⑤ 锚泊监测（走锚）</h2>
@@ -319,6 +321,7 @@ document.getElementById('adir').textContent   = d.anchorOn ? (d.anchorDir.toFixe
 document.getElementById('aspeed').textContent = d.anchorOn ? (d.anchorSpeed.toFixed(3) + ' m/s') : '--';
 document.getElementById('astate').textContent = d.anchorState;
 drawCurve(d.anchorHist);
+drawBerthCurve(d.berthHist);
 document.getElementById('logstate').textContent = d.logOn ? '记录中' : '已暂停';
 document.getElementById('logcount').textContent = d.logCount + ' / ' + d.logCap;
 document.getElementById('logspan').textContent  = d.logSpan + ' 秒';
@@ -366,6 +369,44 @@ async function toggleMoor(){
 const on = document.getElementById('btnMoor').dataset.on === '1';
 try { await fetch('/moor?set=' + (on ? '0' : '1'), {cache:'no-store'}); } catch(e) {}
 tick();
+}
+/* 靠泊距离曲线：横轴是最近 1.5 分钟，纵轴是距岸距离。
+   三条水平线是判断门槛，一眼能看出"离告警还有多远"。
+   无效读数（-1）处断开，不连线。 */
+function drawBerthCurve(hist){
+const c = document.getElementById('bcurve');
+if(!c) return;
+const g = c.getContext('2d');
+const W = c.width, H = c.height;
+g.clearRect(0, 0, W, H);
+if(!hist) return;
+const v = hist.split(',').map(Number);
+if(v.length < 2) return;
+let maxV = 4.0;
+for(let i = 0; i < v.length; i++) if(v[i] > maxV) maxV = v[i];
+maxV *= 1.15;
+const yOf = function(d){ return H - (d / maxV) * (H - 10) - 5; };
+g.font = '10px Consolas,Menlo,monospace';
+g.textBaseline = 'bottom';
+const th = [[3.5, '#38bdf8', '3.5 进入'], [1.0, '#f59e0b', '1.0 靠妥'], [0.5, '#ef4444', '0.5 过近']];
+g.setLineDash([5, 5]);
+for(let k = 0; k < th.length; k++){
+const y = yOf(th[k][0]);
+g.strokeStyle = th[k][1];
+g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
+g.fillStyle = th[k][1];
+g.fillText(th[k][2], 4, y - 1);
+}
+g.setLineDash([]);
+g.strokeStyle = '#7ee2a8'; g.lineWidth = 2; g.beginPath();
+let pen = false;
+for(let i = 0; i < v.length; i++){
+if(v[i] < 0){ pen = false; continue; }
+const x = i * (W - 1) / (v.length - 1);
+const y = yOf(v[i]);
+if(pen) g.lineTo(x, y); else { g.moveTo(x, y); pen = true; }
+}
+g.stroke();
 }
 async function toggleBuzz(){
 const cur = document.getElementById('btnBuzz').dataset.on === '1';
@@ -779,6 +820,7 @@ static String buildJson() {
   j += ",\"anchorAlarm\":";  j += anchorAlarmCode();
   j += ",\"anchorAlarmText\":\""; j += escapeJson(anchorAlarmText()); j += "\"";
   j += ",\"anchorHist\":\""; j += anchorDriftHistory(); j += "\"";
+  j += ",\"berthHist\":\"";  j += berthDistanceHistory(); j += "\"";
   j += ",\"logOn\":";     j += (logbookOn() ? "true" : "false");
   j += ",\"logCount\":";  j += logbookCount();
   j += ",\"logCap\":";    j += logbookCapacity();
