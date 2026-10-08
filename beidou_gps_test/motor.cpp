@@ -10,6 +10,7 @@
    ===================================================================== */
 
 #include "motor.h"
+#include "berth.h"      // 靠泊联锁：读靠泊告警码
 #include <math.h>
 
 #if MOTOR_ENABLE
@@ -21,6 +22,8 @@ static int8_t        s_dir    = 0;       // 当前方向：0 停 / +1 前进 / -
 static bool          s_brake  = false;   // 刹车状态（与滑行互斥）
 static unsigned long s_lastMs = 0;       // 上一次斜坡计算时刻
 static unsigned long s_zeroMs = 0;       // 刚降到 0 的时刻（换向等待用）
+static bool          s_lockHard  = false; // 靠泊严重告警联锁（0x02/0x03）
+static float         s_cap       = 1.0f;  // 当前油门上限（提醒级会压低）
 
 /* 把方向和转速真正写到引脚下 */
 static void applyOutput() {
@@ -74,9 +77,28 @@ void motorUpdate() {
   if (dt < 0.01f) return;                   // 10ms 以内不重复算，省 CPU
   s_lastMs = now;
 
+#if MOTOR_BERTH_LOCK_ENABLE
+  /* ---- 靠泊联锁：告警期间不接受油门 ---- */
+  uint8_t  ba       = berthAlarmCode();
+  bool     hardAlarm = (ba == 0x02 || ba == 0x03);
+  if (hardAlarm != s_lockHard) {
+    s_lockHard = hardAlarm;
+    if (hardAlarm) {
+      motorBrake();                          // 立即刹车
+      Serial.printf("[电机] 靠泊告警 0x%02X，自动收油门并刹车（重新给油门才恢复）\n", ba);
+    } else {
+      Serial.println("[电机] 靠泊告警已解除，联锁复位");
+    }
+  }
+  if (s_lockHard) s_target = 0.0f;           // 联锁期间油门一直被压回 0
+  s_cap = (ba == 0x01) ? MOTOR_BERTH_WARN_CAP : 1.0f;   // 提醒级限速
+#endif
+
   /* 目标油门 → 方向 + 大小（死区内一律当停车） */
   float tgt = s_target;
   if (fabsf(tgt) < MOTOR_DEADBAND) tgt = 0.0f;
+  if (tgt >  s_cap) tgt =  s_cap;            // 提醒级：油门被压低
+  if (tgt < -s_cap) tgt = -s_cap;
   int8_t tdir = (tgt > 0.0f) ? 1 : (tgt < 0.0f ? -1 : 0);
   float  tmag = fabsf(tgt);
 
@@ -117,6 +139,12 @@ void motorUpdate() {
 }
 
 void motorSetThrottle(float t) {
+#if MOTOR_BERTH_LOCK_ENABLE
+  if (s_lockHard) {                     // 严重告警联锁中，直接拒绝
+    Serial.println("[电机] 靠泊严重告警联锁中，油门被拒绝（等告警解除后重新给油门）");
+    return;
+  }
+#endif
   if (t >  1.0f) t =  1.0f;
   if (t < -1.0f) t = -1.0f;
   s_target = t;
@@ -145,9 +173,17 @@ void motorEmergencyStop() {
 bool  motorReady()  { return s_ready; }
 float motorTarget() { return s_target; }
 float motorOutput() { return s_brake ? 0.0f : s_mag; }
+bool  motorLocked() { return s_lockHard; }
 
 const char* motorStateText() {
   static char b[28];
+#if MOTOR_BERTH_LOCK_ENABLE
+  if (s_lockHard) return "靠泊联锁·已停车";
+  if (s_cap < 1.0f) {
+    snprintf(b, sizeof(b), "靠泊限速 %.0f%%", s_cap * 100.0f);
+    return b;
+  }
+#endif
   if (s_brake) return "刹车";
   if (s_dir > 0) {
     snprintf(b, sizeof(b), "前进 %.0f%%", s_mag * 100.0f);
@@ -177,7 +213,9 @@ String motorCmd(const String& arg) {
     snprintf(b, sizeof(b), "[电机] %s   目标 %.2f   输出 %.2f   引脚 AIN1=%d AIN2=%d PWM=%d",
              motorStateText(), s_target, motorOutput(),
              MOTOR_AIN1_PIN, MOTOR_AIN2_PIN, MOTOR_PWM_PIN);
-    return String(b) + "\n用法：motor 0.5 前进 / motor -0.3 倒车 / motor stop / motor brake";
+    return String(b) +
+           "\n用法：motor 0.5 前进 / motor -0.3 倒车 / motor stop / motor brake" +
+           "\n说明：靠泊告警 0x01 时油门上限 30%，0x02/0x03 时自动刹车并联锁（需重新给油门）";
   }
 
   if (a == "stop" || a == "stop1") {
@@ -215,6 +253,7 @@ void  motorEmergencyStop() {}
 bool  motorReady()  { return false; }
 float motorTarget() { return 0.0f; }
 float motorOutput() { return 0.0f; }
+bool  motorLocked() { return false; }
 const char* motorStateText() { return "未启用"; }
 String motorCmd(const String&) { return String("[电机] 本功能未启用"); }
 

@@ -29,5 +29,6 @@ float motorTarget();                // 目标油门
 float motorOutput();                // 实际输出油门（斜坡之后）
 const char* motorStateText();       // “滑行 / 前进 50% / 倒车 30% / 刹车”
 String motorCmd(const String& arg); // 串口命令 motor 的处理
+bool  motorLocked();                // 是否处于靠泊严重告警联锁
 
 #endif
