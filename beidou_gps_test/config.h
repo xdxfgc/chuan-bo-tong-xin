@@ -323,13 +323,16 @@ static const float    MOTOR_DEADBAND  = 0.06f;   // 油门小于这个就当停�
 static const float    MOTOR_RAMP_PS   = 0.80f;   // 每秒最多变化多少油门（软启动/软停）
 static const uint32_t MOTOR_REV_GAP_MS = 300;    // 换向前先停稳这么久，保护 H 桥和电机
 
-/* 靠泊联锁：靠泊告警时自动收油门，避免"一边报警一边还在加速"。
-     0x01 提醒级（速度偏大） → 油门上限压到 MOTOR_BERTH_WARN_CAP
-     0x02 严重级（速度过大）/ 0x03（距岸过近） → 立即刹车并锁定，
-                                              重新给油门才恢复
-   设成 0 可以整体关掉这个联锁（调试时想手动顶着油门就用它）。 */
+/* 电机油门上限与靠泊联锁
+   ——船模不需要跑快，所以平时也限速，避免"一不小心给满油门船就窜出去"：
+     正常情况            → 上限 MOTOR_CAP_NORMAL（默认 30%）
+     0x01 提醒级（速度偏大）→ 上限压到 MOTOR_BERTH_WARN_CAP（默认 10%）
+     0x02 / 0x03 严重级   → 立即刹车并锁定，重新给油门才恢复
+   设成 0 可以整体关掉"告警联锁"（提醒级限速与严重级刹车都失效），
+   但正常上限仍然生效，改上限请调 MOTOR_CAP_NORMAL。 */
 #define MOTOR_BERTH_LOCK_ENABLE 1
-static const float MOTOR_BERTH_WARN_CAP = 0.30f;   // 提醒级时允许的最大油门
+static const float MOTOR_CAP_NORMAL     = 0.30f;   // 正常情况下的油门上限
+static const float MOTOR_BERTH_WARN_CAP = 0.10f;   // 靠泊提醒级（0x01）时的上限
 
 /* ---------------- 走锚监测（锚泊位移监测） ----------------
    靠好或抛锚稳定后，用网页上的“设基准”按钮把当前位置记为原点，之后持续监测位移。

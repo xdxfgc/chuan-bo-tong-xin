@@ -254,15 +254,15 @@ style="width:100%;margin:6px 0 12px" oninput="showRec(this.value)">
 </div>
 <p class="sub">油门 -100% ~ +100%，负数是倒车。松手才生效；软启动约 1.3 秒到全速，
 换向会先停稳 0.3 秒保护 H 桥。上电默认停止。</p>
-<p class="sub">靠泊联锁：靠泊告警 0x01（速度偏大）时油门上限压到 30%；
+<p class="sub">油门上限：正常 30%；靠泊告警 0x01（速度偏大）时降到 10%；
 0x02（速度过大）或 0x03（距岸过近）时自动刹车并联锁，需重新给油门才恢复。</p>
 <div class="bar">
 <input type="range" id="mthr" min="-100" max="100" value="0" step="5"
  style="width:100%" onchange="setMotor(this.value)">
 </div>
 <div class="bar">
-<button class="btn" onclick="motorGo(60)">前进 60%</button>
-<button class="btn" onclick="motorGo(-40)">倒车 40%</button>
+<button class="btn" onclick="motorGo(30)">前进 30%</button>
+<button class="btn" onclick="motorGo(-20)">倒车 20%</button>
 <button class="btn" onclick="motorAct('stop')">滑行停</button>
 <button class="btn" onclick="motorAct('estop')">急停</button>
 </div>

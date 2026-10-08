@@ -23,7 +23,8 @@ static bool          s_brake  = false;   // 刹车状态（与滑行互斥）
 static unsigned long s_lastMs = 0;       // 上一次斜坡计算时刻
 static unsigned long s_zeroMs = 0;       // 刚降到 0 的时刻（换向等待用）
 static bool          s_lockHard  = false; // 靠泊严重告警联锁（0x02/0x03）
-static float         s_cap       = 1.0f;  // 当前油门上限（提醒级会压低）
+static float         s_cap       = MOTOR_CAP_NORMAL;  // 当前油门上限
+static bool          s_capByAlarm = false;            // 上限是被靠泊提醒级压下来的
 
 /* 把方向和转速真正写到引脚下 */
 static void applyOutput() {
@@ -91,13 +92,14 @@ void motorUpdate() {
     }
   }
   if (s_lockHard) s_target = 0.0f;           // 联锁期间油门一直被压回 0
-  s_cap = (ba == 0x01) ? MOTOR_BERTH_WARN_CAP : 1.0f;   // 提醒级限速
+  s_capByAlarm = (ba == 0x01);               // 提醒级：上限进一步压到 10%
 #endif
+  s_cap = s_capByAlarm ? MOTOR_BERTH_WARN_CAP : MOTOR_CAP_NORMAL;
 
   /* 目标油门 → 方向 + 大小（死区内一律当停车） */
   float tgt = s_target;
   if (fabsf(tgt) < MOTOR_DEADBAND) tgt = 0.0f;
-  if (tgt >  s_cap) tgt =  s_cap;            // 提醒级：油门被压低
+  if (tgt >  s_cap) tgt =  s_cap;            // 限速：正常 30%，提醒级 10%
   if (tgt < -s_cap) tgt = -s_cap;
   int8_t tdir = (tgt > 0.0f) ? 1 : (tgt < 0.0f ? -1 : 0);
   float  tmag = fabsf(tgt);
@@ -179,10 +181,7 @@ const char* motorStateText() {
   static char b[28];
 #if MOTOR_BERTH_LOCK_ENABLE
   if (s_lockHard) return "靠泊联锁·已停车";
-  if (s_cap < 1.0f) {
-    snprintf(b, sizeof(b), "靠泊限速 %.0f%%", s_cap * 100.0f);
-    return b;
-  }
+  if (s_capByAlarm) return "靠泊告警·限速 10%";
 #endif
   if (s_brake) return "刹车";
   if (s_dir > 0) {
@@ -215,7 +214,8 @@ String motorCmd(const String& arg) {
              MOTOR_AIN1_PIN, MOTOR_AIN2_PIN, MOTOR_PWM_PIN);
     return String(b) +
            "\n用法：motor 0.5 前进 / motor -0.3 倒车 / motor stop / motor brake" +
-           "\n说明：靠泊告警 0x01 时油门上限 30%，0x02/0x03 时自动刹车并联锁（需重新给油门）";
+           "\n说明：正常油门上限 30%；靠泊告警 0x01 时降到 10%；0x02/0x03 时自动刹车并联锁"
+           "（需重新给油门）";
   }
 
   if (a == "stop" || a == "stop1") {
