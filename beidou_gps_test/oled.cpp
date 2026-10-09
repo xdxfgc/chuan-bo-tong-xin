@@ -142,16 +142,25 @@ static void renderOwn() {
     drawCN(0, 23, "等待定位…");
   }
 
-  /* 第 4 行：激光距离 + 航向 */
-  drawCN(0, 47, "激光");
+  /* 第 4 行：激光距离 + 航向
+     距离超出量程（对着远处的空处、前面没有反射面）时**整段不画**：
+     这种情况传感器没坏，屏幕上却冒一个"无效"出来，看的人第一反应是设备坏了。
+     真正该提醒人的两种情况仍然写出来：
+       · 模块没起来            → "未连接"
+       · 传感器一直不出数据等  → "无效"（表示该去查线了）
+     右半边的航向不受影响，它跟激光没关系。                        */
   if (!tofIsReady()) {
+    drawCN(0, 47, "激光");
     drawCN(26, 47, "未连接");
   } else if (tofIsValid()) {
+    drawCN(0, 47, "激光");
     snprintf(buf, sizeof(buf), "%umm", tofDistanceMm());
     drawSM(26, 47, buf);
-  } else {
+  } else if (!tofOutOfRange()) {
+    drawCN(0, 47, "激光");
     drawCN(26, 47, "无效");
   }
+  /* else：太远看不到东西 —— 这一段什么都不画，屏幕留白 */
 
   drawCN(64, 47, "航向");
   if (magPresent() && magCalibrated()) {

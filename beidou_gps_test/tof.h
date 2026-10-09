@@ -23,6 +23,13 @@ bool     tofIsValid();          // 船头本次读数是否有效
 uint16_t tofDistanceMm();       // 船头距离（毫米）
 String   tofText();             // 船头距离文字
 
+/* ---- 失败原因查询（给 OLED 用） ----
+   OLED 只想知道一件事：这次没读数，是"看不到东西"还是"设备/线有问题"。
+     · tofOutOfRange() == true  → 太远 / 没有反射面，属于正常情况，屏幕上不必写"无效"
+     · tofOutOfRange() == false → 该显示出来提醒人去查（模块没起来、传感器不出数据等） */
+uint8_t  tofFailCode();         // 最近一次失败的状态码（VL53L1X 的 RangeStatus）
+bool     tofOutOfRange();       // 失败原因是否属于"太远/看不到东西"
+
 /* ---- 右舷那只（TOF_SIDE_ENABLE == 0 时全是空实现） ---- */
 bool     tofSideIsReady();      // 右舷那只是否初始化成功
 bool     tofSideIsValid();      // 右舷本次读数是否有效

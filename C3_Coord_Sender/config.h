@@ -161,7 +161,7 @@
          留着它反而会让信标永远触发不了。
    1 = 接入：水感 + 姿态三条都满足才报警（实测标定完阈值再打开）。      */
 #ifndef POSTURE_JUDGE
-#define POSTURE_JUDGE     0
+#define POSTURE_JUDGE     1
 #endif
 
 /* ---------------- 落水激活状态机 ----------------

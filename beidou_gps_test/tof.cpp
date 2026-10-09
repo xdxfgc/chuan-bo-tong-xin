@@ -244,6 +244,33 @@ static const char* tofStaleReason(uint32_t resultMs) {
   return nullptr;
 }
 
+uint8_t tofFailCode() { return bowFailSt; }
+
+/* 这次没读数，是不是"看不到东西"（太远 / 没有反射面）？
+
+   为什么要单独拎出来：VL53L1X 对着远处的空处时，返回的状态码本来就不是
+   RangeValid，而是下面这几个之一 —— 它并没有坏，只是前面没东西。
+   现场看屏幕的人看到"无效"两个字，第一反应是设备坏了，所以这类情况
+   干脆什么都不显示，屏幕上留白更干净。
+
+   两类**不算**"看不到东西"，仍然要让它们显示出来：
+     · 传感器连结果都不出了（掉线/供电不稳）→ tofStaleReason 有话说
+     · 目标太近、硬件故障等其它状态码      → 状态码自己会解释
+   这样"该干净的时候干净，该提醒的时候提醒"。 */
+bool tofOutOfRange() {
+  if (bowValid) return false;                      // 有有效距离，谈不上"看不到"
+  if (tofStaleReason(bowResultMs)) return false;   // 连结果都没有 = 掉线，必须显示
+  switch (bowFailSt) {
+    case VL53L1X::SigmaFail:       // 信号弱：目标太远、太黑，或环境光太强
+    case VL53L1X::SignalFail:      // 回波太弱：目标太黑/太斜，或没有反射面
+    case VL53L1X::OutOfBoundsFail: // 超出量程：目标太远（>4m）或没有反射面
+    case VL53L1X::WrapTargetFail:  // 相位缠绕：目标太远
+      return true;
+    default:
+      return false;
+  }
+}
+
 String tofText() {
   if (!bowReady) return "模块未连接";
   if (!bowValid) {

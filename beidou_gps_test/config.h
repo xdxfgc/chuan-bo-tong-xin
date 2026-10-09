@@ -363,6 +363,21 @@ static const uint32_t MOTOR_REV_GAP_MS = 300;    // 换向前先停稳这么久�
 static const float MOTOR_CAP_NORMAL     = 0.30f;   // 正常情况下的油门上限
 static const float MOTOR_BERTH_WARN_CAP = 0.10f;   // 靠泊提醒级（0x01）时的上限
 
+/* 按"距岸距离"分档限速：越靠近岸，允许的油门越小。
+   这是"自动收油"的主体——告警联锁只是兜底，正常靠泊应该靠这个慢下来，
+   一路都不该碰到 0.15 / 0.30 那两条告警线。
+   分档点对着 berth 模块已经在用的 3.5m 进入 / 1.0m 靠妥 / 0.5m 过近。 */
+#define MOTOR_BERTH_CAP_ENABLE 1
+static const float MOTOR_CAP_D1 = 3.0f;    // 距离档位（米）
+static const float MOTOR_CAP_C1 = 0.30f;   // 3 米以上：正常 30%
+static const float MOTOR_CAP_D2 = 2.0f;
+static const float MOTOR_CAP_C2 = 0.20f;   // 2~3 米：20%
+static const float MOTOR_CAP_D3 = 1.0f;
+static const float MOTOR_CAP_C3 = 0.12f;   // 1~2 米：12%
+static const float MOTOR_CAP_D4 = 0.5f;
+static const float MOTOR_CAP_C4 = 0.08f;   // 0.5~1 米：8%，慢慢贴
+static const float MOTOR_CAP_C5 = 0.00f;   // 0.5 米以内：直接收油停住
+
 /* ---------------- 走锚监测（锚泊位移监测） ----------------
    靠好或抛锚稳定后，用网页上的“设基准”按钮把当前位置记为原点，之后持续监测位移。
    判定按文档附录 B：

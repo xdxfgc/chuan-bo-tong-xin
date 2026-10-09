@@ -25,6 +25,25 @@ static unsigned long s_zeroMs = 0;       // 刚降到 0 的时刻（换向等待
 static bool          s_lockHard  = false; // 靠泊严重告警联锁（0x02/0x03）
 static float         s_cap       = MOTOR_CAP_NORMAL;  // 当前油门上限
 static bool          s_capByAlarm = false;            // 上限是被靠泊提醒级压下来的
+static int           s_capTier    = -1;               // 当前距离档（-1 = 没在靠泊监测里）
+
+/* 按距岸距离给出油门上限。没在靠泊监测里就返回正常上限，等于不限速。
+   分档点见 config.h 的 MOTOR_CAP_* —— 改档位只动那几个常量。 */
+#if MOTOR_BERTH_CAP_ENABLE
+static float distanceCap(int* tierOut) {
+  *tierOut = -1;
+  if (!berthActive() || !berthValid()) return MOTOR_CAP_NORMAL;
+  float d = berthDistanceM();
+  if (d <= 0.0f) return MOTOR_CAP_NORMAL;
+
+  if (d < MOTOR_CAP_D4) { *tierOut = 5; return MOTOR_CAP_C5; }   // < 0.5 米：停
+  if (d < MOTOR_CAP_D3) { *tierOut = 4; return MOTOR_CAP_C4; }
+  if (d < MOTOR_CAP_D2) { *tierOut = 3; return MOTOR_CAP_C3; }
+  if (d < MOTOR_CAP_D1) { *tierOut = 2; return MOTOR_CAP_C2; }
+  *tierOut = 1;
+  return MOTOR_CAP_C1;
+}
+#endif
 
 /* 把方向和转速真正写到引脚下 */
 static void applyOutput() {
@@ -95,6 +114,22 @@ void motorUpdate() {
   s_capByAlarm = (ba == 0x01);               // 提醒级：上限进一步压到 10%
 #endif
   s_cap = s_capByAlarm ? MOTOR_BERTH_WARN_CAP : MOTOR_CAP_NORMAL;
+
+#if MOTOR_BERTH_CAP_ENABLE
+  /* ---- 按距岸距离分档收油：越近越慢，正常靠泊不该碰到告警线 ---- */
+  int tier = -1;
+  float dcap = distanceCap(&tier);
+  if (dcap < s_cap) s_cap = dcap;            // 和告警上限取更严的那个
+  if (tier != s_capTier) {
+    s_capTier = tier;
+    if (tier < 0) {
+      Serial.println("[电机] 离开靠泊监测区，恢复油门上限");
+    } else {
+      Serial.printf("[电机] 距岸 %.2f 米 → 油门上限压到 %.0f%%\n",
+                    berthDistanceM(), s_cap * 100.0f);
+    }
+  }
+#endif
 
   /* 目标油门 → 方向 + 大小（死区内一律当停车） */
   float tgt = s_target;
