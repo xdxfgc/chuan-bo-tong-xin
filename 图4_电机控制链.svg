@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 740" font-family="'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <filter id="sh" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#475569"/>
+    </marker>
+    <marker id="arRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#EF4444"/>
+    </marker>
+  </defs>
+
+  <rect width="1100" height="740" fill="#F8FAFC"/>
+
+  <text x="550" y="46" text-anchor="middle" font-size="26" font-weight="bold" fill="#1E293B">电机执行 · 控制链与靠泊联锁</text>
+  <text x="550" y="72" text-anchor="middle" font-size="14" fill="#64748B">TB6612 H 桥驱动 · 目标油门 → 安全约束 → 斜坡换向 → 引脚输出</text>
+
+  <!-- ===== 控制链主流程 ===== -->
+  <g font-size="12" fill="#1E293B">
+    <!-- 目标油门 -->
+    <rect x="30" y="100" width="150" height="64" rx="8" fill="#DBEAFE" stroke="#3B82F6" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="105" y="125" text-anchor="middle" font-weight="bold" fill="#1E40AF">① 目标油门</text>
+    <text x="105" y="144" text-anchor="middle" font-size="10" fill="#1E3A8A">s_target = -1.0 ~ +1.0</text>
+    <text x="105" y="158" text-anchor="middle" font-size="10" fill="#1E3A8A">串口 motor 0.5</text>
+
+    <text x="180" y="134" font-size="16">→</text>
+
+    <!-- 靠泊联锁 -->
+    <rect x="200" y="100" width="160" height="64" rx="8" fill="#FEE2E2" stroke="#EF4444" stroke-width="2" filter="url(#sh)"/>
+    <text x="280" y="123" text-anchor="middle" font-weight="bold" fill="#991B1B">② 靠泊联锁</text>
+    <text x="280" y="141" text-anchor="middle" font-size="10" fill="#7F1D1D">0x02/0x03 → 拒绝+刹车</text>
+    <text x="280" y="155" text-anchor="middle" font-size="10" fill="#7F1D1D">0x01 → 上限 10%</text>
+
+    <text x="360" y="134" font-size="16">→</text>
+
+    <!-- 死区 -->
+    <rect x="380" y="100" width="120" height="64" rx="8" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="440" y="125" text-anchor="middle" font-weight="bold" fill="#92400E">③ 死区</text>
+    <text x="440" y="144" text-anchor="middle" font-size="10" fill="#78350F">|油门| &lt; 0.06</text>
+    <text x="440" y="158" text-anchor="middle" font-size="10" fill="#78350F">→ 当停车</text>
+
+    <text x="500" y="134" font-size="16">→</text>
+
+    <!-- 限幅 -->
+    <rect x="520" y="100" width="120" height="64" rx="8" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="580" y="125" text-anchor="middle" font-weight="bold" fill="#92400E">④ 限幅</text>
+    <text x="580" y="144" text-anchor="middle" font-size="10" fill="#78350F">正常上限 30%</text>
+    <text x="580" y="158" text-anchor="middle" font-size="10" fill="#78350F">提醒级 10%</text>
+
+    <text x="640" y="134" font-size="16">→</text>
+
+    <!-- 换向保护 -->
+    <rect x="660" y="100" width="150" height="64" rx="8" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="735" y="123" text-anchor="middle" font-weight="bold" fill="#5B21B6">⑤ 换向保护</text>
+    <text x="735" y="141" text-anchor="middle" font-size="10" fill="#4C1D95">前进↔倒车：先降速到0</text>
+    <text x="735" y="155" text-anchor="middle" font-size="10" fill="#4C1D95">再停稳 300ms 才换向</text>
+
+    <text x="810" y="134" font-size="16">→</text>
+
+    <!-- 斜坡 -->
+    <rect x="830" y="100" width="120" height="64" rx="8" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5" filter="url(#sh)"/>
+    <text x="890" y="125" text-anchor="middle" font-weight="bold" fill="#5B21B6">⑥ 斜坡</text>
+    <text x="890" y="144" text-anchor="middle" font-size="10" fill="#4C1D95">每秒最多变 0.80</text>
+    <text x="890" y="158" text-anchor="middle" font-size="10" fill="#4C1D95">软启动/软停</text>
+
+    <text x="950" y="134" font-size="16">→</text>
+
+    <!-- 输出 -->
+    <rect x="970" y="100" width="100" height="64" rx="8" fill="#D1FAE5" stroke="#10B981" stroke-width="2" filter="url(#sh)"/>
+    <text x="1020" y="125" text-anchor="middle" font-weight="bold" fill="#065F46">⑦ 输出</text>
+    <text x="1020" y="144" text-anchor="middle" font-size="10" fill="#047857">AIN1/AIN2</text>
+    <text x="1020" y="158" text-anchor="middle" font-size="10" fill="#047857">PWMA 占空比</text>
+  </g>
+
+  <!-- ===== 联锁分支详解 ===== -->
+  <text x="550" y="200" text-anchor="middle" font-size="17" font-weight="bold" fill="#1E293B">靠泊联锁机制</text>
+
+  <!-- 正常 -->
+  <rect x="80" y="215" width="290" height="90" rx="10" fill="#ECFDF5" stroke="#10B981" stroke-width="2" filter="url(#sh)"/>
+  <text x="225" y="242" text-anchor="middle" font-size="15" font-weight="bold" fill="#065F46">正常（无告警）</text>
+  <text x="225" y="264" text-anchor="middle" font-size="12" fill="#047857">上限 = 30%（MOTOR_CAP_NORMAL）</text>
+  <text x="225" y="282" text-anchor="middle" font-size="12" fill="#047857">motor 0.5 → 实际 0.30</text>
+  <text x="225" y="298" text-anchor="middle" font-size="10" fill="#059669">到全速约 0.375 秒</text>
+
+  <!-- 提醒级 -->
+  <rect x="405" y="215" width="290" height="90" rx="10" fill="#FEF3C7" stroke="#F59E0B" stroke-width="2" filter="url(#sh)"/>
+  <text x="550" y="242" text-anchor="middle" font-size="15" font-weight="bold" fill="#92400E">0x01 提醒级（速度偏大）</text>
+  <text x="550" y="264" text-anchor="middle" font-size="12" fill="#78350F">上限压到 10%</text>
+  <text x="550" y="282" text-anchor="middle" font-size="12" fill="#78350F">电机还能转，但很慢</text>
+  <text x="550" y="298" text-anchor="middle" font-size="10" fill="#A16207">蜂鸣器两短声</text>
+
+  <!-- 严重级 -->
+  <rect x="730" y="215" width="290" height="90" rx="10" fill="#FEE2E2" stroke="#EF4444" stroke-width="2.5" filter="url(#sh)"/>
+  <text x="875" y="242" text-anchor="middle" font-size="15" font-weight="bold" fill="#991B1B">0x02 / 0x03 严重级</text>
+  <text x="875" y="264" text-anchor="middle" font-size="12" fill="#7F1D1D">立即刹车（s_brake=true）</text>
+  <text x="875" y="282" text-anchor="middle" font-size="12" fill="#7F1D1D">motorSetThrottle 直接拒绝</text>
+  <text x="875" y="298" text-anchor="middle" font-size="10" fill="#B91C1C">蜂鸣器急促 · 需重新给油门</text>
+
+  <!-- 联锁恢复说明 -->
+  <rect x="80" y="320" width="940" height="44" rx="6" fill="#1E293B"/>
+  <text x="550" y="348" text-anchor="middle" font-size="13" fill="#F1F5F9">⚠ 联锁恢复后 s_target 已被压成 0，不会自动恢复 —— 必须再敲一次 motor 命令才重新转</text>
+
+  <!-- ===== TB6612 真值表 ===== -->
+  <text x="550" y="392" text-anchor="middle" font-size="17" font-weight="bold" fill="#1E293B">TB6612 真值表（H 桥）</text>
+
+  <g font-size="13">
+    <!-- 表头 -->
+    <rect x="120" y="408" width="860" height="36" rx="6" fill="#334155"/>
+    <text x="210" y="431" text-anchor="middle" font-weight="bold" fill="#FFFFFF">AIN1</text>
+    <text x="300" y="431" text-anchor="middle" font-weight="bold" fill="#FFFFFF">AIN2</text>
+    <text x="420" y="431" text-anchor="middle" font-weight="bold" fill="#FFFFFF">PWMA</text>
+    <text x="580" y="431" text-anchor="middle" font-weight="bold" fill="#FFFFFF">电机状态</text>
+    <text x="800" y="431" text-anchor="middle" font-weight="bold" fill="#FFFFFF">说明</text>
+
+    <!-- 正转 -->
+    <rect x="120" y="444" width="860" height="42" fill="#ECFDF5"/>
+    <text x="210" y="470" text-anchor="middle" font-weight="bold" fill="#065F46">H</text>
+    <text x="300" y="470" text-anchor="middle" font-weight="bold" fill="#065F46">L</text>
+    <text x="420" y="470" text-anchor="middle" fill="#047857">0 ~ 255（调速）</text>
+    <text x="580" y="470" text-anchor="middle" font-weight="bold" fill="#065F46">正转（前进）</text>
+    <text x="800" y="470" text-anchor="middle" font-size="11" fill="#047857">s_dir = +1</text>
+
+    <!-- 反转 -->
+    <rect x="120" y="486" width="860" height="42" fill="#EFF6FF"/>
+    <text x="210" y="512" text-anchor="middle" font-weight="bold" fill="#1E40AF">L</text>
+    <text x="300" y="512" text-anchor="middle" font-weight="bold" fill="#1E40AF">H</text>
+    <text x="420" y="512" text-anchor="middle" fill="#1E3A8A">0 ~ 255（调速）</text>
+    <text x="580" y="512" text-anchor="middle" font-weight="bold" fill="#1E40AF">反转（倒车）</text>
+    <text x="800" y="512" text-anchor="middle" font-size="11" fill="#1E3A8A">s_dir = -1</text>
+
+    <!-- 滑行 -->
+    <rect x="120" y="528" width="860" height="42" fill="#F8FAFC"/>
+    <text x="210" y="554" text-anchor="middle" fill="#475569">L</text>
+    <text x="300" y="554" text-anchor="middle" fill="#475569">L</text>
+    <text x="420" y="554" text-anchor="middle" fill="#64748B">任意</text>
+    <text x="580" y="554" text-anchor="middle" fill="#334155">滑行（慢慢停）</text>
+    <text x="800" y="554" text-anchor="middle" font-size="11" fill="#64748B">motor stop</text>
+
+    <!-- 刹车 -->
+    <rect x="120" y="570" width="860" height="42" fill="#FEE2E2"/>
+    <text x="210" y="596" text-anchor="middle" font-weight="bold" fill="#991B1B">H</text>
+    <text x="300" y="596" text-anchor="middle" font-weight="bold" fill="#991B1B">H</text>
+    <text x="420" y="596" text-anchor="middle" fill="#7F1D1D">255（最大）</text>
+    <text x="580" y="596" text-anchor="middle" font-weight="bold" fill="#991B1B">刹车（快速停）</text>
+    <text x="800" y="596" text-anchor="middle" font-size="11" fill="#B91C1C">motor brake / 严重告警</text>
+  </g>
+
+  <!-- ===== 串口命令 ===== -->
+  <text x="550" y="642" text-anchor="middle" font-size="17" font-weight="bold" fill="#1E293B">串口命令</text>
+
+  <g font-size="12" fill="#1E293B">
+    <rect x="80" y="658" width="180" height="56" rx="8" fill="#F1F5F9" stroke="#94A3B8" stroke-width="1.5"/>
+    <text x="170" y="680" text-anchor="middle" font-family="monospace" font-weight="bold">motor 0.5</text>
+    <text x="170" y="700" text-anchor="middle" font-size="11" fill="#475569">前进 50%</text>
+
+    <rect x="280" y="658" width="180" height="56" rx="8" fill="#F1F5F9" stroke="#94A3B8" stroke-width="1.5"/>
+    <text x="370" y="680" text-anchor="middle" font-family="monospace" font-weight="bold">motor -0.3</text>
+    <text x="370" y="700" text-anchor="middle" font-size="11" fill="#475569">倒车 30%</text>
+
+    <rect x="480" y="658" width="180" height="56" rx="8" fill="#F1F5F9" stroke="#94A3B8" stroke-width="1.5"/>
+    <text x="570" y="680" text-anchor="middle" font-family="monospace" font-weight="bold">motor stop</text>
+    <text x="570" y="700" text-anchor="middle" font-size="11" fill="#475569">滑行停车</text>
+
+    <rect x="680" y="658" width="180" height="56" rx="8" fill="#F1F5F9" stroke="#94A3B8" stroke-width="1.5"/>
+    <text x="770" y="680" text-anchor="middle" font-family="monospace" font-weight="bold">motor brake</text>
+    <text x="770" y="700" text-anchor="middle" font-size="11" fill="#475569">刹车</text>
+
+    <rect x="880" y="658" width="140" height="56" rx="8" fill="#F1F5F9" stroke="#94A3B8" stroke-width="1.5"/>
+    <text x="950" y="680" text-anchor="middle" font-family="monospace" font-weight="bold">motor estop</text>
+    <text x="950" y="700" text-anchor="middle" font-size="11" fill="#475569">急停</text>
+  </g>
+
+  <text x="550" y="732" text-anchor="middle" font-size="11" fill="#94A3B8">硬件：AIN1=GPIO2 · AIN2=GPIO15 · PWMA=GPIO12 · PWM 5kHz 8bit（占空比 0~255）</text>
+</svg>

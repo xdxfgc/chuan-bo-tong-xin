@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 720" font-family="'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <filter id="sh" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <rect width="1100" height="720" fill="#F8FAFC"/>
+
+  <text x="550" y="46" text-anchor="middle" font-size="26" font-weight="bold" fill="#1E293B">三端统一文本协议 · 帧格式</text>
+  <text x="550" y="72" text-anchor="middle" font-size="14" fill="#64748B">M 信标 · S 船端 · R 岸基 · A 应答  ·  第 2 字段统一为发送者编号</text>
+
+  <!-- ===== 编号规则 ===== -->
+  <rect x="60" y="95" width="980" height="50" rx="8" fill="#1E293B"/>
+  <text x="550" y="118" text-anchor="middle" font-size="14" font-weight="bold" fill="#F1F5F9">发送者编号：船端 = 1　|　信标 = 11, 12, 13…　|　岸基 = 21, 22…</text>
+  <text x="550" y="136" text-anchor="middle" font-size="11" fill="#94A3B8">兼容老格式（无编号）：老固件读到多余字段自动忽略</text>
+
+  <!-- ===== M 帧：信标 ===== -->
+  <g font-family="monospace" font-size="13">
+    <rect x="60" y="165" width="980" height="100" rx="10" fill="#FFF7ED" stroke="#F97316" stroke-width="2" filter="url(#sh)"/>
+    <text x="80" y="192" font-size="15" font-weight="bold" fill="#9A3412">M 帧（信标 → 船端 / 岸基）</text>
+
+    <!-- 字段框 -->
+    <rect x="80" y="205" width="40" height="36" rx="4" fill="#FDBA74" stroke="#EA580C"/>
+    <text x="100" y="228" text-anchor="middle" fill="#7C2D12" font-weight="bold">M</text>
+
+    <rect x="124" y="205" width="70" height="36" rx="4" fill="#FED7AA" stroke="#FB923C"/>
+    <text x="159" y="228" text-anchor="middle" fill="#7C2D12">ID</text>
+
+    <rect x="198" y="205" width="80" height="36" rx="4" fill="#FED7AA" stroke="#FB923C"/>
+    <text x="238" y="228" text-anchor="middle" fill="#7C2D12">序号</text>
+
+    <rect x="282" y="205" width="40" height="36" rx="4" fill="#FED7AA" stroke="#FB923C"/>
+    <text x="302" y="228" text-anchor="middle" fill="#7C2D12">P</text>
+
+    <rect x="326" y="205" width="60" height="36" rx="4" fill="#FED7AA" stroke="#FB923C"/>
+    <text x="356" y="228" text-anchor="middle" fill="#7C2D12">有效</text>
+
+    <rect x="390" y="205" width="110" height="36" rx="4" fill="#FED7AA" stroke="#FB923C"/>
+    <text x="445" y="228" text-anchor="middle" fill="#7C2D12">纬度</text>
+
+    <rect x="504" y="205" width="110" height="36" rx="4" fill="#FED7AA" stroke="#FB923C"/>
+    <text x="559" y="228" text-anchor="middle" fill="#7C2D12">经度</text>
+
+    <rect x="618" y="205" width="60" height="36" rx="4" fill="#FCA5A5" stroke="#EF4444" stroke-width="2"/>
+    <text x="648" y="228" text-anchor="middle" fill="#7F1D1D" font-weight="bold">水感</text>
+
+    <text x="720" y="228" fill="#92400E" font-family="'PingFang SC',sans-serif" font-size="12">← 新增字段，船端据此报警</text>
+    <text x="720" y="248" fill="#92400E" font-family="'PingFang SC',sans-serif" font-size="11">示例：M,11,42,P,1,26.208676,111.599388,1</text>
+  </g>
+
+  <!-- ===== S 帧：船端 ===== -->
+  <g font-family="monospace" font-size="13">
+    <rect x="60" y="280" width="980" height="100" rx="10" fill="#EFF6FF" stroke="#3B82F6" stroke-width="2" filter="url(#sh)"/>
+    <text x="80" y="307" font-size="15" font-weight="bold" fill="#1E40AF">S 帧（船端 → 岸基）</text>
+
+    <rect x="80" y="320" width="40" height="36" rx="4" fill="#93C5FD" stroke="#2563EB"/>
+    <text x="100" y="343" text-anchor="middle" fill="#1E3A8A" font-weight="bold">S</text>
+
+    <rect x="124" y="320" width="70" height="36" rx="4" fill="#BFDBFE" stroke="#60A5FA"/>
+    <text x="159" y="343" text-anchor="middle" fill="#1E3A8A">ID</text>
+
+    <rect x="198" y="320" width="80" height="36" rx="4" fill="#BFDBFE" stroke="#60A5FA"/>
+    <text x="238" y="343" text-anchor="middle" fill="#1E3A8A">序号</text>
+
+    <rect x="282" y="320" width="60" height="36" rx="4" fill="#BFDBFE" stroke="#60A5FA"/>
+    <text x="312" y="343" text-anchor="middle" fill="#1E3A8A">有效</text>
+
+    <rect x="346" y="320" width="110" height="36" rx="4" fill="#BFDBFE" stroke="#60A5FA"/>
+    <text x="401" y="343" text-anchor="middle" fill="#1E3A8A">纬度</text>
+
+    <rect x="460" y="320" width="110" height="36" rx="4" fill="#BFDBFE" stroke="#60A5FA"/>
+    <text x="515" y="343" text-anchor="middle" fill="#1E3A8A">经度</text>
+
+    <rect x="574" y="320" width="110" height="36" rx="4" fill="#DBEAFE" stroke="#818CF8"/>
+    <text x="629" y="343" text-anchor="middle" fill="#3730A3">航向°</text>
+
+    <rect x="688" y="320" width="90" height="36" rx="4" fill="#DBEAFE" stroke="#818CF8"/>
+    <text x="733" y="343" text-anchor="middle" fill="#3730A3">俯仰°</text>
+
+    <rect x="782" y="320" width="90" height="36" rx="4" fill="#DBEAFE" stroke="#818CF8"/>
+    <text x="827" y="343" text-anchor="middle" fill="#3730A3">横滚°</text>
+
+    <rect x="876" y="320" width="150" height="36" rx="4" fill="#DBEAFE" stroke="#818CF8"/>
+    <text x="951" y="343" text-anchor="middle" fill="#3730A3">靠泊告警码</text>
+
+    <text x="80" y="370" fill="#1E3A8A" font-family="'PingFang SC',sans-serif" font-size="11">示例：S,1,15,1,26.208700,111.599400,135.2,2.1,-1.3,0x01</text>
+  </g>
+
+  <!-- ===== R 帧：岸基 ===== -->
+  <g font-family="monospace" font-size="13">
+    <rect x="60" y="395" width="980" height="100" rx="10" fill="#F0FDF4" stroke="#22C55E" stroke-width="2" filter="url(#sh)"/>
+    <text x="80" y="422" font-size="15" font-weight="bold" fill="#14532D">R 帧（岸基 → 船端 / 信标）</text>
+
+    <rect x="80" y="435" width="40" height="36" rx="4" fill="#86EFAC" stroke="#16A34A"/>
+    <text x="100" y="458" text-anchor="middle" fill="#14532D" font-weight="bold">R</text>
+
+    <rect x="124" y="435" width="70" height="36" rx="4" fill="#BBF7D0" stroke="#4ADE80"/>
+    <text x="159" y="458" text-anchor="middle" fill="#14532D">ID</text>
+
+    <rect x="198" y="435" width="80" height="36" rx="4" fill="#BBF7D0" stroke="#4ADE80"/>
+    <text x="238" y="458" text-anchor="middle" fill="#14532D">序号</text>
+
+    <rect x="282" y="435" width="60" height="36" rx="4" fill="#BBF7D0" stroke="#4ADE80"/>
+    <text x="312" y="458" text-anchor="middle" fill="#14532D">有效</text>
+
+    <rect x="346" y="435" width="110" height="36" rx="4" fill="#BBF7D0" stroke="#4ADE80"/>
+    <text x="401" y="458" text-anchor="middle" fill="#14532D">纬度</text>
+
+    <rect x="460" y="435" width="110" height="36" rx="4" fill="#BBF7D0" stroke="#4ADE80"/>
+    <text x="515" y="458" text-anchor="middle" fill="#14532D">经度</text>
+
+    <text x="600" y="458" fill="#166534" font-family="'PingFang SC',sans-serif" font-size="12">岸基准坐标广播</text>
+    <text x="80" y="485" fill="#166534" font-family="'PingFang SC',sans-serif" font-size="11">示例：R,21,8,1,26.209000,111.600000</text>
+  </g>
+
+  <!-- ===== A 帧：应答 ===== -->
+  <g font-family="monospace" font-size="13">
+    <rect x="60" y="510" width="980" height="100" rx="10" fill="#F5F3FF" stroke="#8B5CF6" stroke-width="2" filter="url(#sh)"/>
+    <text x="80" y="537" font-size="15" font-weight="bold" fill="#5B21B6">A 帧（应答 · 船端/岸基 → 信标）</text>
+
+    <rect x="80" y="550" width="40" height="36" rx="4" fill="#C4B5FD" stroke="#7C3AED"/>
+    <text x="100" y="573" text-anchor="middle" fill="#4C1D95" font-weight="bold">A</text>
+
+    <rect x="124" y="550" width="70" height="36" rx="4" fill="#DDD6FE" stroke="#A78BFA"/>
+    <text x="159" y="573" text-anchor="middle" fill="#4C1D95">ID</text>
+
+    <rect x="198" y="550" width="80" height="36" rx="4" fill="#DDD6FE" stroke="#A78BFA"/>
+    <text x="238" y="573" text-anchor="middle" fill="#4C1D95">应答序号</text>
+
+    <rect x="282" y="550" width="60" height="36" rx="4" fill="#DDD6FE" stroke="#A78BFA"/>
+    <text x="312" y="573" text-anchor="middle" fill="#4C1D95">有效</text>
+
+    <rect x="346" y="550" width="110" height="36" rx="4" fill="#DDD6FE" stroke="#A78BFA"/>
+    <text x="401" y="573" text-anchor="middle" fill="#4C1D95">纬度</text>
+
+    <rect x="460" y="550" width="110" height="36" rx="4" fill="#DDD6FE" stroke="#A78BFA"/>
+    <text x="515" y="573" text-anchor="middle" fill="#4C1D95">经度</text>
+
+    <text x="600" y="573" fill="#5B21B6" font-family="'PingFang SC',sans-serif" font-size="12">信标收到 ACK 即停重传</text>
+    <text x="80" y="600" fill="#5B21B6" font-family="'PingFang SC',sans-serif" font-size="11">示例：A,1,42,1,26.208700,111.599400  （船端回给信标 #42）</text>
+  </g>
+
+  <!-- ===== 链路机制 ===== -->
+  <rect x="60" y="630" width="980" height="75" rx="10" fill="#1E293B"/>
+  <text x="550" y="656" text-anchor="middle" font-size="15" font-weight="bold" fill="#F1F5F9">链路机制</text>
+
+  <g font-size="12" fill="#CBD5E1">
+    <text x="200" y="680" text-anchor="middle">一问一答：发 M 帧 → 等 ACK</text>
+    <text x="200" y="698" text-anchor="middle" font-size="11" fill="#94A3B8">超时 1.2s 重传，最多 3 次</text>
+
+    <text x="450" y="680" text-anchor="middle">重传识别：按"发送者+序号"</text>
+    <text x="450" y="698" text-anchor="middle" font-size="11" fill="#94A3B8">重复包只回 ACK 不重复处理</text>
+
+    <text x="700" y="680" text-anchor="middle">船端让路：收完信标包后</text>
+    <text x="700" y="698" text-anchor="middle" font-size="11" fill="#94A3B8">再发自己的 S 帧，避免撞包</text>
+
+    <text x="930" y="680" text-anchor="middle">落水优先级最高</text>
+    <text x="930" y="698" text-anchor="middle" font-size="11" fill="#94A3B8">信标 SOS 不被船端广播压</text>
+  </g>
+
+  <text x="550" y="728" text-anchor="middle" font-size="11" fill="#94A3B8">※ 所有帧均为 ASCII 文本，逗号分隔，便于调试和多设备互通</text>
+</svg>

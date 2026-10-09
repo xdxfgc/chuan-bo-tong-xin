@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 720" font-family="'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <linearGradient id="gIdle" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#94A3B8"/>
+      <stop offset="100%" stop-color="#64748B"/>
+    </linearGradient>
+    <linearGradient id="gWait" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FBBF24"/>
+      <stop offset="100%" stop-color="#D97706"/>
+    </linearGradient>
+    <linearGradient id="gActive" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#EF4444"/>
+      <stop offset="100%" stop-color="#B91C1C"/>
+    </linearGradient>
+    <filter id="sh" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-opacity="0.2"/>
+    </filter>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#475569"/>
+    </marker>
+    <marker id="arRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#EF4444"/>
+    </marker>
+  </defs>
+
+  <rect width="1100" height="720" fill="#F8FAFC"/>
+
+  <text x="550" y="48" text-anchor="middle" font-size="26" font-weight="bold" fill="#1E293B">信标落水检测 · 三重确认状态机</text>
+  <text x="550" y="74" text-anchor="middle" font-size="14" fill="#64748B">水感 + 姿态 + 持续时间  三重确认 · 确认后永久锁定 · 仅人工复位</text>
+
+  <!-- ===== 三重大条件 ===== -->
+  <g font-size="12">
+    <!-- 第一重：水感 -->
+    <rect x="40" y="110" width="300" height="100" rx="10" fill="#FEF3C7" stroke="#F59E0B" stroke-width="2"/>
+    <text x="190" y="135" text-anchor="middle" font-size="15" font-weight="bold" fill="#92400E">第一重：水感检测</text>
+    <text x="190" y="158" text-anchor="middle" fill="#78350F">电极间歇通电（双向交替防腐）</text>
+    <text x="190" y="176" text-anchor="middle" fill="#78350F">连续湿满 2 秒（WATER_CONFIRM_MS）</text>
+    <text x="190" y="194" text-anchor="middle" fill="#78350F">碰一下水花不算，防误报</text>
+
+    <!-- 第二重：姿态 -->
+    <rect x="40" y="230" width="300" height="140" rx="10" fill="#DBEAFE" stroke="#3B82F6" stroke-width="2"/>
+    <text x="190" y="255" text-anchor="middle" font-size="15" font-weight="bold" fill="#1E40AF">第二重：姿态判定（三条子判据）</text>
+    <text x="190" y="278" text-anchor="middle" fill="#1E3A8A">① 失重→冲击波形（30 秒内有效）</text>
+    <text x="190" y="296" text-anchor="middle" fill="#1E3A8A">   失重 &lt; 0.6g → 冲击 &gt; 1.8g</text>
+    <text x="190" y="316" text-anchor="middle" fill="#1E3A8A">② 相对基准倾角 &gt; 55°</text>
+    <text x="190" y="334" text-anchor="middle" fill="#1E3A8A">③ 运动强度 &lt; 0.30g（水面平静）</text>
+    <text x="190" y="356" text-anchor="middle" font-size="11" fill="#6B7280">※ 当前 POSTURE_JUDGE=0，待标定</text>
+
+    <!-- 第三重：持续时间（已包含在水感里，这里强调整体） -->
+    <rect x="40" y="390" width="300" height="80" rx="10" fill="#FEE2E2" stroke="#EF4444" stroke-width="2"/>
+    <text x="190" y="415" text-anchor="middle" font-size="15" font-weight="bold" fill="#991B1B">第三重：持续时间</text>
+    <text x="190" y="438" text-anchor="middle" fill="#7F1D1D">水感 + 姿态同时成立</text>
+    <text x="190" y="456" text-anchor="middle" fill="#7F1D1D">等待姿态最多 15 秒超时放弃</text>
+  </g>
+
+  <!-- ===== 状态机 ===== -->
+  <!-- IDLE -->
+  <g filter="url(#sh)">
+    <rect x="430" y="140" width="220" height="100" rx="14" fill="url(#gIdle)"/>
+    <text x="540" y="180" text-anchor="middle" font-size="22" font-weight="bold" fill="#FFFFFF">IDLE</text>
+    <text x="540" y="205" text-anchor="middle" font-size="13" fill="#E2E8F0">待机 · 值守慢发 8s/帧</text>
+    <text x="540" y="224" text-anchor="middle" font-size="11" fill="#CBD5E1">水感位 = 0</text>
+  </g>
+
+  <!-- WAIT -->
+  <g filter="url(#sh)">
+    <rect x="430" y="300" width="220" height="100" rx="14" fill="url(#gWait)"/>
+    <text x="540" y="340" text-anchor="middle" font-size="22" font-weight="bold" fill="#FFFFFF">WAIT</text>
+    <text x="540" y="365" text-anchor="middle" font-size="13" fill="#FEF3C7">水感已确认 · 等姿态</text>
+    <text x="540" y="384" text-anchor="middle" font-size="11" fill="#FDE68A">超时 15s → 回 IDLE</text>
+  </g>
+
+  <!-- ACTIVE -->
+  <g filter="url(#sh)">
+    <rect x="750" y="300" width="240" height="130" rx="14" fill="url(#gActive)"/>
+    <text x="870" y="345" text-anchor="middle" font-size="24" font-weight="bold" fill="#FFFFFF">ACTIVE</text>
+    <text x="870" y="372" text-anchor="middle" font-size="13" fill="#FECACA">★ 三重确认通过</text>
+    <text x="870" y="392" text-anchor="middle" font-size="13" fill="#FECACA">入水快发 2s/帧</text>
+    <text x="870" y="412" text-anchor="middle" font-size="12" fill="#FCA5A5">水感位 = 1 · 永久锁定</text>
+  </g>
+
+  <!-- 转换箭头 -->
+  <!-- IDLE -> WAIT -->
+  <line x1="540" y1="240" x2="540" y2="300" stroke="#475569" stroke-width="2.5" marker-end="url(#ar)"/>
+  <rect x="470" y="253" width="140" height="26" rx="5" fill="#1E293B"/>
+  <text x="540" y="271" text-anchor="middle" font-size="11" font-weight="bold" fill="#FFFFFF">水感连续湿满 2s</text>
+
+  <!-- WAIT -> ACTIVE -->
+  <line x1="650" y1="350" x2="750" y2="350" stroke="#EF4444" stroke-width="3" marker-end="url(#arRed)"/>
+  <rect x="665" y="318" width="70" height="26" rx="5" fill="#EF4444"/>
+  <text x="700" y="336" text-anchor="middle" font-size="11" font-weight="bold" fill="#FFFFFF">姿态通过</text>
+
+  <!-- WAIT -> IDLE（超时） -->
+  <path d="M430,350 Q350,350 350,260 Q350,190 430,190" stroke="#64748B" stroke-width="2" fill="none" stroke-dasharray="6,4" marker-end="url(#ar)"/>
+  <rect x="300" y="250" width="70" height="22" rx="4" fill="#64748B"/>
+  <text x="335" y="266" text-anchor="middle" font-size="10" fill="#FFFFFF">超时15s</text>
+
+  <!-- WAIT -> IDLE（水感中断） -->
+  <path d="M430,380 Q300,400 300,300 Q300,230 430,210" stroke="#64748B" stroke-width="2" fill="none" stroke-dasharray="6,4" marker-end="url(#ar)"/>
+  <rect x="245" y="350" width="80" height="22" rx="4" fill="#64748B"/>
+  <text x="285" y="366" text-anchor="middle" font-size="10" fill="#FFFFFF">水感中断</text>
+
+  <!-- ACTIVE -> IDLE（复位） -->
+  <path d="M870,430 Q870,520 540,520 Q300,520 300,400 Q300,240 430,190" stroke="#10B981" stroke-width="2.5" fill="none" marker-end="url(#ar)"/>
+  <rect x="540" y="500" width="180" height="28" rx="6" fill="#10B981"/>
+  <text x="630" y="519" text-anchor="middle" font-size="12" font-weight="bold" fill="#FFFFFF">人工复位（长按 BOOT 5s / reset）</text>
+
+  <!-- ===== 右侧：激活后行为 ===== -->
+  <rect x="750" y="140" width="240" height="130" rx="10" fill="#F1F5F9" stroke="#94A3B8" stroke-width="1.5"/>
+  <text x="870" y="168" text-anchor="middle" font-size="14" font-weight="bold" fill="#1E293B">激活后上报节奏</text>
+  <line x1="770" y1="178" x2="970" y2="178" stroke="#CBD5E1"/>
+  <text x="870" y="200" text-anchor="middle" font-size="12" fill="#334155">值守：8 秒一帧</text>
+  <text x="870" y="218" text-anchor="middle" font-size="12" fill="#334155">入水：2 秒一帧</text>
+  <text x="870" y="236" text-anchor="middle" font-size="12" fill="#334155">帧尾水感位 = 1</text>
+  <text x="870" y="254" text-anchor="middle" font-size="11" fill="#64748B">收到 ACK 停止重传</text>
+
+  <!-- ===== 底部：船端/岸基收到后的反应 ===== -->
+  <rect x="40" y="510" width="1020" height="180" rx="12" fill="#1E293B"/>
+  <text x="550" y="542" text-anchor="middle" font-size="16" font-weight="bold" fill="#F8FAFC">激活后 · 船端 &amp; 岸基同步反应</text>
+
+  <!-- 船端反应 -->
+  <rect x="70" y="560" width="460" height="110" rx="8" fill="#334155"/>
+  <text x="300" y="584" text-anchor="middle" font-size="14" font-weight="bold" fill="#93C5FD">船端反应</text>
+  <text x="300" y="606" text-anchor="middle" font-size="12" fill="#E2E8F0">蜂鸣器三短声（最高级） · 语音"人员落水，XX方向约XX米"</text>
+  <text x="300" y="626" text-anchor="middle" font-size="12" fill="#E2E8F0">OLED 切落水画面 · 网页红色横幅</text>
+  <text x="300" y="646" text-anchor="middle" font-size="12" fill="#94A3B8">回 ACK → 信标停重传 · 需人工 ack 确认才停</text>
+
+  <!-- 岸基反应 -->
+  <rect x="570" y="560" width="460" height="110" rx="8" fill="#334155"/>
+  <text x="800" y="584" text-anchor="middle" font-size="14" font-weight="bold" fill="#86EFAC">岸基反应</text>
+  <text x="800" y="606" text-anchor="middle" font-size="12" fill="#E2E8F0">信标在线即报警（不等定位有效）</text>
+  <text x="800" y="626" text-anchor="middle" font-size="12" fill="#E2E8F0">蜂鸣器 + 语音 + 网页红屏</text>
+  <text x="800" y="646" text-anchor="middle" font-size="12" fill="#94A3B8">多目标救援优先级打分 · 确认告警按钮</text>
+
+  <text x="550" y="705" text-anchor="middle" font-size="11" fill="#94A3B8">※ 激活后永久锁定：中途被浪盖住/离水都不停，只有 BOOT 5s 或串口 reset 才解除</text>
+</svg>

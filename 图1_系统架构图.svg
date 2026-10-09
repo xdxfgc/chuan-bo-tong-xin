@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" font-family="'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <linearGradient id="gBoat" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4A90D9"/>
+      <stop offset="100%" stop-color="#2E5E8E"/>
+    </linearGradient>
+    <linearGradient id="gBeacon" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E8734A"/>
+      <stop offset="100%" stop-color="#B8532A"/>
+    </linearGradient>
+    <linearGradient id="gShore" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5BBF7A"/>
+      <stop offset="100%" stop-color="#3A8A52"/>
+    </linearGradient>
+    <linearGradient id="gLora" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#8B5CF6"/>
+      <stop offset="100%" stop-color="#A78BFA"/>
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-opacity="0.2"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#6B7280"/>
+    </marker>
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#8B5CF6"/>
+    </marker>
+  </defs>
+
+  <!-- 背景 -->
+  <rect width="1200" height="780" fill="#F8FAFC"/>
+
+  <!-- 标题 -->
+  <text x="600" y="50" text-anchor="middle" font-size="28" font-weight="bold" fill="#1E293B">通导一体化水上安全终端 · 系统架构</text>
+  <text x="600" y="80" text-anchor="middle" font-size="15" fill="#64748B">船端 · 信标 · 岸基  三端互联 · 统一文本协议 · 433MHz LoRa</text>
+
+  <!-- ========== 船端 ========== -->
+  <g filter="url(#shadow)">
+    <rect x="80" y="140" width="320" height="500" rx="16" fill="url(#gBoat)"/>
+    <rect x="80" y="140" width="320" height="56" rx="16" fill="#1E3A5F"/>
+    <rect x="80" y="180" width="320" height="16" fill="#1E3A5F"/>
+    <text x="240" y="175" text-anchor="middle" font-size="20" font-weight="bold" fill="#FFFFFF">船端（移动终端）</text>
+    <text x="240" y="196" text-anchor="middle" font-size="12" fill="#BFDBFE">ESP32 · 控制核心</text>
+  </g>
+  <!-- 船端模块 -->
+  <g font-size="13" fill="#FFFFFF">
+    <rect x="100" y="220" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="167" y="245" text-anchor="middle">北斗定位</text>
+    <rect x="245" y="220" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="312" y="245" text-anchor="middle">双路激光测距</text>
+
+    <rect x="100" y="270" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="167" y="295" text-anchor="middle">MPU6050 姿态</text>
+    <rect x="245" y="270" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="312" y="295" text-anchor="middle">磁力计航向</text>
+
+    <rect x="100" y="320" width="280" height="40" rx="6" fill="#FBBF24" fill-opacity="0.9"/>
+    <text x="240" y="345" text-anchor="middle" font-weight="bold" fill="#78350F">靠泊辅助（分级告警+联锁）</text>
+
+    <rect x="100" y="370" width="280" height="40" rx="6" fill="#FBBF24" fill-opacity="0.9"/>
+    <text x="240" y="395" text-anchor="middle" font-weight="bold" fill="#78350F">走锚监测</text>
+
+    <rect x="100" y="420" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="167" y="445" text-anchor="middle">信标搜索引导</text>
+    <rect x="245" y="420" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="312" y="445" text-anchor="middle">岸基跟踪</text>
+
+    <rect x="100" y="470" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="167" y="495" text-anchor="middle">语音 SYN6288</text>
+    <rect x="245" y="470" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="312" y="495" text-anchor="middle">蜂鸣器</text>
+
+    <rect x="100" y="520" width="280" height="40" rx="6" fill="#EF4444" fill-opacity="0.85"/>
+    <text x="240" y="545" text-anchor="middle" font-weight="bold">电机执行（靠泊联锁）</text>
+
+    <rect x="100" y="570" width="280" height="50" rx="6" fill="#FFFFFF" fill-opacity="0.15"/>
+    <text x="240" y="593" text-anchor="middle" font-weight="bold">WiFi 网页 · 10 标签页</text>
+    <text x="240" y="610" text-anchor="middle" font-size="11">数据记录/CSV/回放 · OLED · 串口命令</text>
+  </g>
+
+  <!-- ========== 信标 ========== -->
+  <g filter="url(#shadow)">
+    <rect x="440" y="200" width="320" height="380" rx="16" fill="url(#gBeacon)"/>
+    <rect x="440" y="200" width="320" height="56" rx="16" fill="#7C2D12"/>
+    <rect x="440" y="240" width="320" height="16" fill="#7C2D12"/>
+    <text x="600" y="235" text-anchor="middle" font-size="20" font-weight="bold" fill="#FFFFFF">信标（可穿戴）</text>
+    <text x="600" y="256" text-anchor="middle" font-size="12" fill="#FED7AA">ESP32-C3 · 低功耗</text>
+  </g>
+  <g font-size="13" fill="#FFFFFF">
+    <rect x="460" y="280" width="280" height="40" rx="6" fill="#FBBF24" fill-opacity="0.9"/>
+    <text x="600" y="305" text-anchor="middle" font-weight="bold" fill="#78350F">水感检测（间歇通电防腐）</text>
+
+    <rect x="460" y="330" width="280" height="40" rx="6" fill="#FBBF24" fill-opacity="0.9"/>
+    <text x="600" y="355" text-anchor="middle" font-weight="bold" fill="#78350F">姿态判定（失重→冲击波形）</text>
+
+    <rect x="460" y="380" width="280" height="40" rx="6" fill="#EF4444" fill-opacity="0.85"/>
+    <text x="600" y="405" text-anchor="middle" font-weight="bold">三重确认状态机（锁定）</text>
+
+    <rect x="460" y="430" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="527" y="455" text-anchor="middle">坐标四模式</text>
+    <rect x="605" y="430" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="672" y="455" text-anchor="middle">深度休眠</text>
+
+    <rect x="460" y="480" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="527" y="505" text-anchor="middle">一问一答 ACK</text>
+    <rect x="605" y="480" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="672" y="505" text-anchor="middle">值守/入水快慢发</text>
+
+    <rect x="460" y="530" width="280" height="36" rx="6" fill="#FFFFFF" fill-opacity="0.15"/>
+    <text x="600" y="553" text-anchor="middle" font-size="12">上报：M,ID,序号,P,有效,纬度,经度,水感</text>
+  </g>
+
+  <!-- ========== 岸基 ========== -->
+  <g filter="url(#shadow)">
+    <rect x="800" y="160" width="320" height="460" rx="16" fill="url(#gShore)"/>
+    <rect x="800" y="160" width="320" height="56" rx="16" fill="#14532D"/>
+    <rect x="800" y="200" width="320" height="16" fill="#14532D"/>
+    <text x="960" y="195" text-anchor="middle" font-size="20" font-weight="bold" fill="#FFFFFF">岸基（港口端）</text>
+    <text x="960" y="216" text-anchor="middle" font-size="12" fill="#BBF7D0">ESP32 · 参考站</text>
+  </g>
+  <g font-size="13" fill="#FFFFFF">
+    <rect x="820" y="240" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="887" y="265" text-anchor="middle">北斗基准定位</text>
+    <rect x="965" y="240" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="1032" y="265" text-anchor="middle">LoRa 收发</text>
+
+    <rect x="820" y="290" width="280" height="40" rx="6" fill="#FBBF24" fill-opacity="0.9"/>
+    <text x="960" y="315" text-anchor="middle" font-weight="bold" fill="#78350F">多信标跟踪（最多 4 只）</text>
+
+    <rect x="820" y="340" width="280" height="40" rx="6" fill="#FBBF24" fill-opacity="0.9"/>
+    <text x="960" y="365" text-anchor="middle" font-weight="bold" fill="#78350F">多目标救援优先级打分</text>
+
+    <rect x="820" y="390" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="887" y="415" text-anchor="middle">落水告警</text>
+    <rect x="965" y="390" width="135" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="1032" y="415" text-anchor="middle">失联/恢复播报</text>
+
+    <rect x="820" y="440" width="280" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="960" y="465" text-anchor="middle">OLED + 语音 SYN6288</text>
+
+    <rect x="820" y="490" width="280" height="50" rx="6" fill="#FFFFFF" fill-opacity="0.15"/>
+    <text x="960" y="513" text-anchor="middle" font-weight="bold">WiFi 网页 · 4 标签页</text>
+    <text x="960" y="530" text-anchor="middle" font-size="11">态势图（正北朝上）· CSV 下载</text>
+
+    <rect x="820" y="550" width="280" height="40" rx="6" fill="#FFFFFF" fill-opacity="0.18"/>
+    <text x="960" y="575" text-anchor="middle">黑匣子数据记录</text>
+  </g>
+
+  <!-- ========== LoRa 通信链路 ========== -->
+  <!-- 船端 <-> 信标 -->
+  <path d="M400,350 Q520,120 600,200" stroke="url(#gLora)" stroke-width="3" fill="none" stroke-dasharray="8,4" marker-end="url(#arrowPurple)"/>
+  <path d="M600,200 Q520,120 400,350" stroke="url(#gLora)" stroke-width="3" fill="none" stroke-dasharray="8,4" marker-end="url(#arrowPurple)"/>
+  <rect x="430" y="105" width="140" height="28" rx="14" fill="#8B5CF6"/>
+  <text x="500" y="124" text-anchor="middle" font-size="12" font-weight="bold" fill="#FFFFFF">M 帧 / ACK</text>
+
+  <!-- 船端 <-> 岸基 -->
+  <line x1="760" y1="350" x2="800" y2="350" stroke="url(#gLora)" stroke-width="3" stroke-dasharray="8,4" marker-end="url(#arrowPurple)"/>
+  <line x1="800" y1="370" x2="760" y2="370" stroke="url(#gLora)" stroke-width="3" stroke-dasharray="8,4" marker-end="url(#arrowPurple)"/>
+  <rect x="740" y="385" width="120" height="28" rx="14" fill="#8B5CF6"/>
+  <text x="800" y="404" text-anchor="middle" font-size="12" font-weight="bold" fill="#FFFFFF">S 帧 / R 帧</text>
+
+  <!-- 信标 <-> 岸基 -->
+  <path d="M760,460 Q880,620 960,620" stroke="url(#gLora)" stroke-width="3" fill="none" stroke-dasharray="8,4" marker-end="url(#arrowPurple)"/>
+  <path d="M960,620 Q880,620 760,460" stroke="url(#gLora)" stroke-width="3" fill="none" stroke-dasharray="8,4" marker-end="url(#arrowPurple)"/>
+  <rect x="790" y="630" width="140" height="28" rx="14" fill="#8B5CF6"/>
+  <text x="860" y="649" text-anchor="middle" font-size="12" font-weight="bold" fill="#FFFFFF">M 帧 / R 帧 / ACK</text>
+
+  <!-- 射频参数 -->
+  <rect x="400" y="700" width="400" height="50" rx="10" fill="#1E293B"/>
+  <text x="600" y="722" text-anchor="middle" font-size="13" font-weight="bold" fill="#F1F5F9">统一射频参数</text>
+  <text x="600" y="742" text-anchor="middle" font-size="12" fill="#94A3B8">433MHz · SF10 · BW125kHz · 同步字 0x12 · CRC 开</text>
+
+  <!-- 协议说明 -->
+  <rect x="60" y="670" width="300" height="80" rx="10" fill="#E2E8F0"/>
+  <text x="210" y="693" text-anchor="middle" font-size="13" font-weight="bold" fill="#1E293B">统一文本协议</text>
+  <text x="210" y="713" text-anchor="middle" font-size="11" fill="#475569">第 2 字段 = 发送者编号</text>
+  <text x="210" y="730" text-anchor="middle" font-size="11" fill="#475569">船端=1 · 信标=11+ · 岸基=21+</text>
+  <text x="210" y="745" text-anchor="middle" font-size="11" fill="#475569">兼容老格式（无编号）</text>
+
+  <!-- 说明 -->
+  <text x="600" y="775" text-anchor="middle" font-size="11" fill="#94A3B8">※ 信标姿态判定当前 POSTURE_JUDGE=0（已接入采集，阈值待标定后投入判定）</text>
+</svg>
