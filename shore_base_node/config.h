@@ -53,7 +53,7 @@ static const int  RF_SYNC = 0x12;
 static const int      SYN_RX_PIN = 4;
 static const int      SYN_TX_PIN = 16;
 static const uint32_t SYN_BAUD   = 9600;
-static const uint8_t  SYN_VOLUME = 16;
+static const uint8_t  SYN_VOLUME = 8;
 
 /* ---------------- 激光测距模块 VL53L1X（I2C） ----------------
    和船端接法一致：VIN -> 3.3V（切勿接 5V）  GND -> GND
@@ -161,6 +161,22 @@ static const float PRIO_VESSEL_FULL_M   = 1000.0f; // 离船端 1000 米算满�
 #define AP_FALLBACK 1
 #define AP_SSID     "Shore-Base"
 #define AP_PASS     "12345678"
+
+/* ---------------- 演示模式：开机直接开热点，不连路由器 ----------------
+   0 = 正常连路由器（连不上才自动开热点，原来的行为）
+   1 = 强制热点：开机跳过路由器，直接开 Shore-Base 热点，地址固定 192.168.4.1
+
+   现场演示用 1 最稳，因为它把路由器整个踢出局了：
+     · 不用求人开路由器、不用知道路由器密码
+     · 不怕"无线隔离"（设备之间不能互访）
+     · 不怕固定 IP 被别人占用、不怕 2.4G/5G 混在一起
+   手机连上 Shore-Base（密码 12345678），浏览器打开 http://192.168.4.1 即可。
+
+   ⚠ 开了之后节点就不再接路由器了。想改回连路由器，改回 0 重新烧录即可，
+      接线一根都不用动。
+   ⚠ 船端和岸基各是一个热点，一部手机同一时间只能连一个 —— 想同时看两个
+      页面，准备两台设备（手机看船端、笔记本看岸基）。                    */
+#define FORCE_AP 1
 
 /* ---------------- 调试串口（USB） ---------------- */
 static const uint32_t DBG_BAUD = 115200;

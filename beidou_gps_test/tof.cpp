@@ -19,12 +19,26 @@ static VL53L1X  tofSide;                       // 右舷那只
 static bool     bowReady  = false;
 static bool     bowValid  = false;
 static uint16_t bowMm     = 0;
+/* 下面三个是"为什么现在没有有效距离"的依据：
+     bowGoodMs   —— 最近一次读到**有效**值的时刻（有效性的判断基准）
+     bowResultMs —— 最近一次读到**结果**的时刻，成功失败都算（用来分辨"掉线"）
+     bowFailSt   —— 最近一次失败的状态码（给 tofText() 解释原因用）      */
+static uint32_t bowGoodMs   = 0;
+static uint32_t bowResultMs = 0;
+static uint8_t  bowFailSt   = 0;
 
 static bool     sideReady = false;
 static bool     sideValid = false;
 static uint16_t sideMm    = 0;
+static uint32_t sideGoodMs   = 0;
+static uint32_t sideResultMs = 0;
+static uint8_t  sideFailSt   = 0;
 
 static unsigned long tofLastReadMs = 0;
+
+/* 状态码用不到的几个值借过来表示"不是测量失败，是根本没出结果"。
+   VL53L1X 的 RangeStatus 只占 0~10 附近，借用高位不会撞车。 */
+#define TOF_ST_TIMEOUT  0xFE     // 读超时 / 读到 0 毫米
 
 /* ==================== I2C 小工具（裸 Wire 操作） ====================
    为什么需要这些：VL53L1X 的 I2C 地址写进芯片就一直在，**不随 ESP32 复位恢复**。
@@ -70,21 +84,33 @@ void tofBegin() {
   Wire.begin(TOF_SDA_PIN, TOF_SCL_PIN);
   Wire.setClock(400000);
 
-#if TOF_SIDE_ENABLE
+  /* 上电先把有效性证据全部清零：没有读到过好数据之前，对外一律"无效"，
+     免得开机那一瞬间拿着默认值 0mm 冒充一次有效读数。 */
+  bowValid = false;  bowMm = 0;
+  bowGoodMs = bowResultMs = 0;  bowFailSt = 0;
+  sideValid = false; sideMm = 0;
+  sideGoodMs = sideResultMs = 0; sideFailSt = 0;
+
+  /* 右舷那只先按住：把它的 XSHUT 拉低 = 复位，它就不会出现在总线上。
+     TOF_SIDE_ENABLE == 1 时，这一步是为了先让船头那只拿到默认地址 0x29；
+     TOF_SIDE_ENABLE == 0（右舷暂停）时，这一步是为了让它彻底别来抢 0x29 ——
+     因为 VL53L1X 的 XSHUT 内部有上拉，悬空就等于"使能"，
+     它会自己上电占住 0x29，把船头那只也带得读不出来。
+     所以无论哪种模式，这一句都必须执行，只是后面放不放开的区别。 */
   pinMode(TOF2_XSHUT_PIN, OUTPUT);
-  digitalWrite(TOF2_XSHUT_PIN, LOW);      // 右舷那只先按住，别来抢 0x29
+  digitalWrite(TOF2_XSHUT_PIN, LOW);
   delay(20);
 
   /* 船头那只没有 XSHUT 线，ESP32 复位时它不跟着复位：
      上次被改成 0x2A 的地址会一直留着。这里先探一下，把它请回 0x29，
-     否则下面的船头初始化必然失败（就是日志里那个现象）。 */
+     否则下面的船头初始化必然失败（就是日志里那个现象）。
+     ⚠ 两种模式都要做：右舷停用时，船头那只仍可能残留 0x2A。 */
   if (!busProbe(0x29) && busProbe(TOF_ADDR_BOW)) {
     Serial.printf("检测到船头那只还停在 0x%02X（上次运行残留的地址，芯片没断电不会自己复位），"
                   "正在改回 0x29…\n", TOF_ADDR_BOW);
     busSetAddress(TOF_ADDR_BOW, 0x29);
     delay(10);
   }
-#endif
 
   /* ---- 船头那只 ---- */
   tofBow.setTimeout(500);
@@ -138,37 +164,44 @@ void tofUpdate() {
     /* 读之前先问一句"这次测好了吗"。非阻塞读遇到"还没测好"会直接返回 0，
        而 ranging_data.range_status 还留着上一次的值（通常正好是"正常"），
        于是 0 毫米会被当成一次真读数，串口上就出现「0 mm (0.00 m)」。
-       VL53L1X 的盲区是 4 厘米，0 毫米一定是无效值，这里两道都挡上。 */
-    if (!tofBow.dataReady()) {
-      bowValid = false;
-    } else {
+       VL53L1X 的盲区是 4 厘米，0 毫米一定是无效值，这里两道都挡上。
+
+       ⚠ 关键改动：没出新数据时**什么都不做**，保留上一次的值。
+       以前这里直接写 bowValid = false，等于把"还没轮到出新数据"
+       当成"测不到"，读数就会一轮一轮地闪成无效。              */
+    if (tofBow.dataReady()) {
       uint16_t d = tofBow.read(false);
+      bowResultMs = millis();
       if (tofBow.timeoutOccurred() || d == 0) {
-        bowValid = false;
+        bowFailSt = TOF_ST_TIMEOUT;
       } else if (tofBow.ranging_data.range_status == VL53L1X::RangeValid) {
         bowMm    = d;
-        bowValid = true;
+        bowFailSt = VL53L1X::RangeValid;
+        bowGoodMs = millis();
       } else {
-        bowValid = false;
+        bowFailSt = tofBow.ranging_data.range_status;
       }
     }
+    /* 有效性只在"保持窗口"上判定：窗口内读到过有效值就一直有效。 */
+    bowValid = (bowGoodMs != 0) && (millis() - bowGoodMs <= TOF_VALID_HOLD_MS);
   }
 
 #if TOF_SIDE_ENABLE
   if (sideReady) {
-    if (!tofSide.dataReady()) {
-      sideValid = false;
-    } else {
+    if (tofSide.dataReady()) {          // 同上：没新数据就保留上一次的值
       uint16_t d = tofSide.read(false);
+      sideResultMs = millis();
       if (tofSide.timeoutOccurred() || d == 0) {
-        sideValid = false;
+        sideFailSt = TOF_ST_TIMEOUT;
       } else if (tofSide.ranging_data.range_status == VL53L1X::RangeValid) {
         sideMm    = d;
-        sideValid = true;
+        sideFailSt = VL53L1X::RangeValid;
+        sideGoodMs = millis();
       } else {
-        sideValid = false;
+        sideFailSt = tofSide.ranging_data.range_status;
       }
     }
+    sideValid = (sideGoodMs != 0) && (millis() - sideGoodMs <= TOF_VALID_HOLD_MS);
   }
 #endif
 }
@@ -200,11 +233,24 @@ static const char* tofFailReason(uint8_t st) {
   }
 }
 
+/* 现在没有有效距离，是"根本没出结果"还是"测了但没测到"？
+   这两种要分开说，否则会把"线松了"误判成"激光坏了"：
+     · 连结果都很久没出来 → 传感器卡住或掉线，查供电和接线
+     · 有结果但状态不对   → 目标或环境问题，状态码已经说明了原因
+   返回 nullptr 表示"最近有结果"，调用方就用状态码去解释。 */
+static const char* tofStaleReason(uint32_t resultMs) {
+  if (resultMs == 0 || (millis() - resultMs) > TOF_VALID_HOLD_MS)
+    return "传感器一直没有新数据：查 VIN=3.3V、GND 共地、SDA/SCL 接触";
+  return nullptr;
+}
+
 String tofText() {
   if (!bowReady) return "模块未连接";
   if (!bowValid) {
-    char b[80];
-    snprintf(b, sizeof(b), "无效（%s）", tofFailReason(tofBow.ranging_data.range_status));
+    char b[160];
+    const char* why = tofStaleReason(bowResultMs);
+    snprintf(b, sizeof(b), "无效（%s）",
+             why ? why : tofFailReason(bowFailSt));
     return String(b);
   }
   char b[32];
@@ -220,8 +266,10 @@ uint16_t tofSideDistanceMm() { return sideMm; }
 String tofSideText() {
   if (!sideReady) return "模块未连接";
   if (!sideValid) {
-    char b[80];
-    snprintf(b, sizeof(b), "无效（%s）", tofFailReason(tofSide.ranging_data.range_status));
+    char b[160];
+    const char* why = tofStaleReason(sideResultMs);
+    snprintf(b, sizeof(b), "无效（%s）",
+             why ? why : tofFailReason(sideFailSt));
     return String(b);
   }
   char b[32];
@@ -232,7 +280,7 @@ String tofSideText() {
 bool     tofSideIsReady()    { return false; }
 bool     tofSideIsValid()    { return false; }
 uint16_t tofSideDistanceMm() { return 0; }
-String   tofSideText()       { return "未安装"; }
+String   tofSideText()       { return "已暂停（config.h 里 TOF_SIDE_ENABLE = 0）"; }
 #endif
 
 void tofPrintReport() {

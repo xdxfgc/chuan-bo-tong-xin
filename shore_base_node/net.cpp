@@ -513,6 +513,7 @@ async function voiceTest(){
    8 b_count 9 b_id 10 b_link 11 b_valid 12 b_lat 13 b_lon 14 b_dist_m 15 b_brg
    16 v_link 17 v_valid 18 v_lat 19 v_lon 20 v_dist_m 21 v_brg 22 v_sog_kn 23 v_cog 24 v_sats */
 let pbData = null, pbIdx = 0, pbTimer = null;
+let pollTimer = null;      // 每秒拉 /data 的定时器（切到后台要停掉，见页面末尾）
 async function loadPlayback(){
   try{
     const t = await (await fetch('/log',{cache:'no-store'})).text();
@@ -555,7 +556,19 @@ function togglePlay(){
     showRec(pbIdx + 1);
   }, 300);
 }
-tick(); setInterval(tick, 1000);
+tick(); pollTimer = setInterval(tick, 1000);
+/* 页面被切到后台（换标签页、手机锁屏）就把轮询停掉，回到前台再恢复。
+   为什么必须这么做：ESP32 的网页服务同一时刻只能伺候一个客户端，
+   开着好几个标签页、每个都每秒拉一次，服务端就排队，表现出来就是"打不开"。 */
+document.addEventListener('visibilitychange', function(){
+  if(document.hidden){
+    if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
+    if(pbTimer){ clearInterval(pbTimer); pbTimer = null; }
+  }else{
+    tick();
+    if(!pollTimer) pollTimer = setInterval(tick, 1000);
+  }
+});
 </script>
 </body>
 </html>
@@ -701,11 +714,25 @@ static String buildJson() {
 }
 
 static void handleRoot() {
-  server.send(200, "text/html; charset=utf-8", INDEX_HTML);
+  /* 页面本体是固定不变的（实时数据全走 /data 接口），所以让浏览器把它缓存住：
+     第一次打开才传这一大段 HTML，之后再打开是"秒开"。
+     ⚠ 改过页面内容之后，浏览器可能还拿着旧的缓存 —— 按一次 Ctrl+F5 强制刷新即可。
+     send_P 直接从 flash 往外发，不会先拼一个几十 KB 的 String 出来占内存。 */
+  server.sendHeader("Cache-Control", "public, max-age=600");
+  server.send_P(200, "text/html; charset=utf-8", INDEX_HTML);
 }
 
 static void handleData() {
+  /* 实时数据绝不能缓存：网页每秒拉一次，拿到旧数据就成假的了 */
+  server.sendHeader("Cache-Control", "no-store");
   server.send(200, "application/json; charset=utf-8", buildJson());
+}
+
+/* 浏览器每次打开页面都会顺手要一次 favicon.ico。
+   不专门处理它就会落到 404 分支，白白多占一次连接 ——
+   而 ESP32 的网页服务同一时刻只能伺候一个客户端，能省一次是一次。 */
+static void handleFavicon() {
+  server.send(204, "image/x-icon", "");
 }
 
 /* 下载 CSV：带表头，Excel 直接能开 */
@@ -725,6 +752,7 @@ static void handleNotFound() {
 
 static void startApMode() {
   WiFi.mode(WIFI_AP);
+  WiFi.setSleep(false);          // 热点模式下也关掉省电，响应更快
   delay(200);
   bool ok = WiFi.softAP(AP_SSID, AP_PASS);
   Serial.println();
@@ -738,9 +766,24 @@ static void startApMode() {
   Serial.print("热点密码: "); Serial.println(AP_PASS);
   Serial.print("网页地址: http://"); Serial.println(WiFi.softAPIP());
   Serial.println("用手机连上这个热点，再打开上面的地址即可查看页面。");
+#if FORCE_AP
+  Serial.println("（当前是演示模式 FORCE_AP = 1：想改回连路由器，"
+                 "把它改成 0 重新烧录。）");
+#endif
 }
 
 static void connectWifi() {
+#if FORCE_AP
+  /* 演示模式：压根不去碰路由器，开机直接开热点。
+     为什么这么做：只要经过路由器，就可能碰上无线隔离、双频混用、
+     固定 IP 被占这些说不清的问题；热点模式下中间没有任何设备，
+     地址永远是 192.168.4.1，谁都拦不住。
+     代价是手机连上热点后没有外网 —— 演示不需要外网。 */
+  Serial.println("【演示模式】FORCE_AP = 1，跳过路由器，直接开热点。");
+  startApMode();
+  return;
+#endif
+
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   delay(100);
@@ -829,6 +872,7 @@ void netBegin() {
   connectWifi();
   server.on("/", handleRoot);
   server.on("/data", handleData);
+  server.on("/favicon.ico", handleFavicon);
   server.on("/ack", []() {
     trackAcknowledge();
     server.send(200, "text/plain; charset=utf-8", "ok");
@@ -854,6 +898,9 @@ void netBegin() {
   });
   server.onNotFound(handleNotFound);
   server.begin();
+  /* 没有客户端连进来时不要每次空转都 delay(1)，
+     让 loop 跑得快一点，网页请求能被更及时地接住。 */
+  server.enableDelay(false);
   Serial.println("网页服务已启动。");
 }
 

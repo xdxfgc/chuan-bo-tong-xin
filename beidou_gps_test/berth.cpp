@@ -16,8 +16,8 @@
 
 #define MED_N 3          // 中值滤波点数
 #define AVG_N 8          // 平均滤波点数
-#define FIT_N 8          // 速度拟合窗口（8 × 50ms = 0.4 秒）
-#define WIN_N 64         // 平稳/静默观察窗（64 × 50ms ≈ 3.2 秒）
+#define FIT_N 8          // 速度拟合窗口（8 × 60ms ≈ 0.5 秒，60ms = TOF_READ_MS）
+#define WIN_N 64         // 平稳/静默观察窗（64 × 60ms ≈ 3.8 秒）
 
 static float    s_med[MED_N];
 static int      s_medN = 0, s_medIdx = 0;
